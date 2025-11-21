@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import * as logger from 'firebase-functions/logger';
 
 import { type Filters, type User } from './types';
@@ -52,7 +52,7 @@ export async function updateUserFilters(chatId: number, filters: Filters): Promi
  * @param chatId - Telegram chat ID
  * @returns New notification state (true if enabled, false if disabled)
  */
-export async function toggleNotifications(chatId: number): Promise<boolean> {
+export async function toggleNotifications(chatId: number, value?: boolean): Promise<boolean> {
     logger.info(`Toggling notifications for user with chatId: ${chatId}`);
     const userRef = usersCollection.doc(chatId.toString());
     const userDoc = await userRef.get();
@@ -64,12 +64,51 @@ export async function toggleNotifications(chatId: number): Promise<boolean> {
     }
 
     const currentState = (userDoc.data() as User).notificationsEnabled;
-    const newState = !currentState;
+    const newState = value ?? !currentState;
+
+    if (newState === currentState) {
+        logger.info(`Notifications for ${chatId} are already ${newState ? 'enabled' : 'disabled'}`);
+        return newState;
+    }
 
     logger.info(`Updating notifications for ${chatId} from ${currentState} to ${newState}`);
     await userRef.update({
         notificationsEnabled: !currentState,
+        lastAdTime: null,
     });
 
     return newState;
+}
+
+/**
+ * Get all users with enabled notifications from the database
+ * @returns Array of user objects
+ */
+export async function getActiveUsers(): Promise<User[]> {
+    logger.info('Getting all users');
+    const snapshot = await usersCollection.where('notificationsEnabled', '==', true).get();
+    const users = snapshot.docs.map((doc) => doc.data() as User);
+    logger.info(`Found ${users.length} users.`);
+    return users;
+}
+
+/**
+ * Update the last ad check timestamp for multiple users.
+ * @param users - Array of users to update.
+ * @param checkTime - The time of the last ad check.
+ */
+export async function updateLastAdTime(userIds: number[], dateTime: Date): Promise<void> {
+    logger.info(`Updating lastAdTime for ${userIds.length} users.`);
+    if (userIds.length === 0) return;
+
+    const timestamp = Timestamp.fromDate(dateTime);
+    const batch = db.batch();
+
+    userIds.forEach((id) => {
+        const userRef = usersCollection.doc(id.toString());
+        batch.update(userRef, { lastAdTime: timestamp });
+    });
+
+    await batch.commit();
+    logger.info(`Successfully updated lastAdTime for ${userIds.length} users to ${dateTime.toISOString()}.`);
 }

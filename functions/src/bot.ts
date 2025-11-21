@@ -4,12 +4,20 @@ import {
     type ConversationFlavor,
 } from '@grammyjs/conversations';
 import { Bot, webhookCallback, type Context } from 'grammy';
+import {
+    type ForceReply,
+    type InlineKeyboardMarkup,
+    type ParseMode,
+    type ReplyKeyboardMarkup,
+    type ReplyKeyboardRemove
+} from 'grammy/types';
 
 import * as logger from 'firebase-functions/logger';
+
 import { setFiltersConversation } from './conversations';
 import * as db from './db';
-import { getCityDisplayName, getRoomsDisplayName } from './types';
 import { mainMenuCustomKeyboard } from './keyboards';
+import { getCityDisplayName, getRoomsDisplayName } from './types';
 
 const {
     BOT_TOKEN: token,
@@ -28,6 +36,16 @@ export function createWebhook() {
     bot.api.setWebhook(webhookUrl!);
     return webhookCallback(bot, 'express');
 }
+
+export const sendPhoto = (
+    chatId: number,
+    imageUrl: string,
+    other?: {
+        caption?: string,
+        parse_mode?: ParseMode,
+        reply_markup?: InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | ForceReply,
+    }
+) => bot.api.sendPhoto(chatId, imageUrl, other);
 
 /**
  * Handles the /start command
@@ -59,7 +77,7 @@ bot.command('start', async (ctx) => {
     return ctx.reply(
         '👋 *С возвращением\\!* Вот твои текущие настройки поиска:\n\n' +
         `🗺 *Город:* ${getCityDisplayName(filters.city)}\n` +
-        `💰 *Минимальная стоимость:* ${minRentText}\n` +
+        `💵 *Минимальная стоимость:* ${minRentText}\n` +
         `💰 *Максимальная стоимость:* ${maxRentText}\n` +
         `🚪 *Количество комнат:* ${roomsText}\n` +
         `🍠 *Уведомления:* ${user.notificationsEnabled ? 'включены' : 'выключены'}`,
@@ -72,6 +90,13 @@ bot.command('start', async (ctx) => {
 
 bot.hears('Изменить фильтры', async (ctx) => {
     logger.info(`Handling change filters command for chat ID: ${ctx.chatId}`);
+    await db.toggleNotifications(ctx.chatId, false);
+    await ctx.reply(`🍠 *Уведомления:* выключены`, {
+        parse_mode: 'MarkdownV2',
+        reply_markup: {
+            remove_keyboard: true,
+        },
+    });
     return ctx.conversation.enter('setFiltersConversation');
 });
 

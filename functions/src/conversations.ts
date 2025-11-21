@@ -52,6 +52,7 @@ export async function setFiltersConversation(conversation: Conversation, ctx: Co
         chatId,
         filters,
         notificationsEnabled: true,
+        lastAdTime: null,
     }));
 
     const minRentText =
@@ -65,7 +66,7 @@ export async function setFiltersConversation(conversation: Conversation, ctx: Co
     await ctx.reply(
         '✅ *Фильтры успешно сохранены\\!*\n\n' +
         `🗺 *Город:* ${getCityDisplayName(city)}\n` +
-        `💰 *Минимальная стоимость:* ${minRentText ?? 'не указана'}\n` +
+        `💵 *Минимальная стоимость:* ${minRentText ?? 'не указана'}\n` +
         `💰 *Максимальная стоимость:* ${maxRentText ?? 'не указана'}\n` +
         `🚪 *Количество комнат:* ${roomsText}`,
         {
@@ -89,6 +90,7 @@ async function askForCity(
                 text: getCityDisplayName(city),
                 callback_data: city,
             }]),
+            remove_keyboard: true,
         },
         parse_mode: 'MarkdownV2',
     });
@@ -106,7 +108,7 @@ async function askForMinRentCost(
     log: (type: LogType, message: string) => Promise<void>,
 ): Promise<number | null> {
     while (true) {
-        await ctx.reply('💰 Укажите *минимальную* сумму арендного платежа в USD или пропустите', {
+        await ctx.reply('💵 Укажите *минимальную* сумму арендного платежа в USD или пропустите', {
             reply_markup: {
                 keyboard: [[{ text: 'Пропустить' }]],
                 resize_keyboard: true,

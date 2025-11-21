@@ -1,3 +1,5 @@
+import { type Timestamp } from 'firebase-admin/firestore';
+
 /**
  * Available cities for filtering real estate listings
  */
@@ -53,4 +55,50 @@ export interface User {
     filters: Filters;
     /** Whether the user is subscribed to notifications */
     notificationsEnabled: boolean;
+    /** Timestamp of the last ad (nullable) */
+    lastAdTime: Timestamp | null;
+}
+
+/**
+ * Represents a parameter for an ad or account.
+ */
+interface Parameter {
+    p: string;
+    v: string | number | (string | number)[];
+    pl: string;
+    vl: string | string[];
+    pu: string;
+}
+
+/**
+ * Represents an image associated with an ad.
+ */
+interface AdImage {
+    path: string;
+}
+
+/**
+ * Represents a kufar ad from the API.
+ */
+interface Ad {
+    ad_id: number;
+    ad_link: string;
+    account_parameters: Parameter[];
+    ad_parameters: Parameter[];
+    body: string | null;
+    body_short: string;
+    company_ad: boolean;
+    images: AdImage[];
+    list_id: number;
+    list_time: string;
+    price_byn: string;
+    price_usd: string;
+    subject: string;
+}
+
+/**
+ * Represents the structure of the Kufar API response for ads.
+ */
+export interface KufarResponse {
+    ads: Ad[];
 }
