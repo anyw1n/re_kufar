@@ -62,8 +62,17 @@ Built with Firebase Functions, Firestore, and Grammy.
    ```
 
 5. **Configure environment variables**
-   - Set up your Firebase project configuration
-   - ...
+   - Create two files next to `functions/package.json`:
+     - `.env.local` – used when running emulators
+     - `.env.prod` – used in deployed functions
+   - Both files need:
+
+   ```bash
+   BOT_TOKEN=<telegram-bot-token>
+   WEBHOOK_URL=https://<region>-<project>.cloudfunctions.net/tgWebhook
+   ```
+
+   `WEBHOOK_URL` should point to the deployed HTTPS function that Telegram will call. Deploying sets the webhook automatically.
 
 6. **Deploy to Firebase**
 
@@ -103,9 +112,24 @@ Built with Firebase Functions, Firestore, and Grammy.
 - `npm run deploy` - Deploy functions to Firebase
 - `npm run logs` - View function logs
 
+## Functions
+
+- `tgWebhook` (HTTPS): Telegram webhook endpoint; sets the webhook to `WEBHOOK_URL` on cold start.
+- `kufarScraper` (Scheduled): In production runs every minute to poll Kufar and push new ads. In local emulators it is exposed as `http://localhost:5001/<project-id>/us-central1/kufarScraper` for manual triggering.
+
 ## Environment Variables
 
-Set environment variables...
+Defined in `.env.local` / `.env.prod`:
+
+- `BOT_TOKEN` – Telegram bot token from BotFather.
+- `WEBHOOK_URL` – HTTPS URL of the deployed `tgWebhook` function.
+
+## Data Model
+
+- Collection `users/{chatId}`
+  - `filters` – user-selected `city`, `minCost`, `maxCost`, `rooms[]`
+  - `notificationsEnabled` – whether the user receives updates
+  - `lastAdTime` – timestamp of the last ad sent
 
 ## License
 
