@@ -17,6 +17,7 @@ import * as logger from 'firebase-functions/logger';
 import { setFiltersConversation } from './conversations';
 import * as db from './db';
 import { mainMenuCustomKeyboard } from './keyboards';
+import { fetchAllAds, formatStatistics } from './statistics';
 import { getCityDisplayName, getRoomsDisplayName } from './types';
 
 const {
@@ -80,7 +81,7 @@ bot.command('start', async (ctx) => {
         `💵 *Минимальная стоимость:* ${minRentText}\n` +
         `💰 *Максимальная стоимость:* ${maxRentText}\n` +
         `🚪 *Количество комнат:* ${roomsText}\n` +
-        `🍠 *Уведомления:* ${user.notificationsEnabled ? 'включены' : 'выключены'}`,
+        `${user.notificationsEnabled ? '🔔 *Уведомления:* включены' : '🔕 *Уведомления:* выключены'}`,
         {
             parse_mode: 'MarkdownV2',
             reply_markup: mainMenuCustomKeyboard(user.notificationsEnabled),
@@ -88,10 +89,10 @@ bot.command('start', async (ctx) => {
     );
 });
 
-bot.hears('Изменить фильтры', async (ctx) => {
+bot.hears('⚙️ Изменить фильтры', async (ctx) => {
     logger.info(`Handling change filters command for chat ID: ${ctx.chatId}`);
     await db.toggleNotifications(ctx.chatId, false);
-    await ctx.reply(`🍠 *Уведомления:* выключены`, {
+    await ctx.reply(`🔕 *Уведомления:* выключены`, {
         parse_mode: 'MarkdownV2',
         reply_markup: {
             remove_keyboard: true,
@@ -100,11 +101,43 @@ bot.hears('Изменить фильтры', async (ctx) => {
     return ctx.conversation.enter('setFiltersConversation');
 });
 
-bot.hears(['Включить уведомления', 'Выключить уведомления'], async (ctx) => {
+bot.hears(['🔔 Включить уведомления', '🔕 Выключить уведомления'], async (ctx) => {
     logger.info(`Handling enable/disable notifications command for chat ID: ${ctx.chatId}`);
     const notificationsEnabled = await db.toggleNotifications(ctx.chatId);
-    return ctx.reply(`🍠 *Уведомления:* ${notificationsEnabled ? 'включены' : 'выключены'}`, {
+    return ctx.reply(`${notificationsEnabled ? '🔔 *Уведомления:* включены' : '🔕 *Уведомления:* выключены'}`, {
         parse_mode: 'MarkdownV2',
         reply_markup: mainMenuCustomKeyboard(notificationsEnabled),
     });
+});
+
+bot.hears('📊 Статистика', async (ctx) => {
+    logger.info(`Handling statistics command for chat ID: ${ctx.chatId}`);
+    const user = await db.getUser(ctx.chatId);
+    if (!user) {
+        return ctx.reply('Сначала настрой фильтры через /start');
+    }
+
+    const msg = await ctx.reply('⏳ Собираю статистику\\.\\.\\.', {
+        parse_mode: 'MarkdownV2',
+    });
+
+    // Fire-and-forget: compute stats in background to avoid webhook timeout
+    fetchAllAds(user.filters.city)
+        .then((ads) => {
+            const cityName = getCityDisplayName(user.filters.city);
+            const text = formatStatistics(ads, cityName);
+            return bot.api.editMessageText(ctx.chatId, msg.message_id, text, {
+                parse_mode: 'MarkdownV2',
+            });
+        })
+        .catch((error) => {
+            logger.error('Error fetching statistics', error);
+            return bot.api.editMessageText(
+                ctx.chatId,
+                msg.message_id,
+                '❌ Не удалось получить статистику\\. Попробуйте позже\\.',
+                { parse_mode: 'MarkdownV2' },
+            );
+        });
+    return msg;
 });

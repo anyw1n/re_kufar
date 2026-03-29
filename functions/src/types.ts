@@ -62,7 +62,7 @@ export interface User {
 /**
  * Represents a parameter for an ad or account.
  */
-interface Parameter {
+export interface Parameter {
     p: string;
     v: string | number | (string | number)[];
     pl: string;
@@ -73,14 +73,14 @@ interface Parameter {
 /**
  * Represents an image associated with an ad.
  */
-interface AdImage {
+export interface AdImage {
     path: string;
 }
 
 /**
  * Represents a kufar ad from the API.
  */
-interface Ad {
+export interface Ad {
     ad_id: number;
     ad_link: string;
     account_parameters: Parameter[];
@@ -101,4 +101,12 @@ interface Ad {
  */
 export interface KufarResponse {
     ads: Ad[];
+    total: number;
+    pagination: {
+        pages: {
+            label: string;
+            num: number;
+            token: string | null;
+        }[];
+    };
 }
