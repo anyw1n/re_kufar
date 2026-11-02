@@ -26,10 +26,19 @@ export enum Rooms {
     Three = '3',
     Four = '4',
     Five = '5',
+    Studio = '6',
 }
 
-export const getRoomsDisplayName = (rooms: Rooms, escaping = false): string =>
-    rooms === Rooms.Five ? `5${escaping ? '\\' : ''}+` : rooms;
+export const getRoomsDisplayName = (rooms: Rooms, escaping = false): string => {
+    switch (rooms) {
+        case Rooms.Five:
+            return `5${escaping ? '\\' : ''}+`;
+        case Rooms.Studio:
+            return 'Студии';
+        default:
+            return rooms;
+    }
+};
 
 /**
  * Filters for real estate search
@@ -41,7 +50,7 @@ export interface Filters {
     minCost: number | null;
     /** Maximum rent cost in USD (nullable) */
     maxCost: number | null;
-    /** Array of desired number of rooms (1, 2, 3, 4, or 5) */
+    /** Desired room counts (1–4, 5+) or studios (Kufar code 6) */
     rooms: Rooms[];
 }
 

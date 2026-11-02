@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import * as logger from 'firebase-functions/logger';
 
 import { type MarketStatistics, type PeriodStatistics } from './market';
-import { type Ad, type City, type KufarResponse } from './types';
+import { getRoomsDisplayName, Rooms, type Ad, type City, type KufarResponse } from './types';
 
 export interface PriceStatistics {
     count: number;
@@ -217,7 +217,8 @@ export function formatStatistics(ads: Ad[], cityDisplayName: string): string {
             const priceText = pricedCount > 0
                 ? `\\~${Math.round(totalPrice / pricedCount)}$`
                 : 'нет подходящих цен';
-            const label = room === '?' ? 'Не указано' : `${room}\\-комн\\.`;
+            const label = room === Rooms.Studio ? getRoomsDisplayName(Rooms.Studio)
+                : room === '?' ? 'Не указано' : `${room}\\-комн\\.`;
             return `  ${label}: ${count} кв\\., ${priceText}`;
         })
         .join('\n');
