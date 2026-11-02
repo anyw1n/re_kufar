@@ -192,8 +192,7 @@ export function formatStatistics(ads: Ad[], cityDisplayName: string): string {
         `  Средняя: ${Math.round(priceStats.average)}$ · Медиана: ${Math.round(priceStats.median)}$\n\n` +
         `📈 *Перцентили цен:*\n` +
         `  P10: ${Math.round(priceStats.p10)}$ · P25: ${Math.round(priceStats.p25)}$\n` +
-        `  P75: ${Math.round(priceStats.p75)}$ · P90: ${Math.round(priceStats.p90)}$\n` +
-        `  _P10 — граница нижних 10% цен; аналогично для P25, P75 и P90\\._`
+        `  P75: ${Math.round(priceStats.p75)}$ · P90: ${Math.round(priceStats.p90)}$`
         : '  Нет объявлений с подходящей ценой\\.';
 
     // --- Room distribution ---
@@ -275,9 +274,7 @@ export function formatMarketStatistics(stats: MarketStatistics | null): string {
         `${formatMarketPeriod('За 7 дней', stats.week)}\n` +
         `  Вернулись за 7 дней: ${stats.week.returnedAds}\n\n` +
         `📅 *По дням: новые / исчезнувшие*\n${dailyLines}\n\n` +
-        `⏳ *Медианное время до исчезновения за 7 дней:*\n  ${lifetime}\n` +
-        `_Медиана — по завершённым наблюдениям с известным началом и без долгих перерывов\\._\n` +
-        `_Исчезновение подтверждаем двумя обходами; оно не подтверждает аренду\\._` + partial;
+        `⏳ *Медианное время до исчезновения за 7 дней:*\n  ${lifetime}` + partial;
 }
 
 /** Escape special characters for MarkdownV2 */

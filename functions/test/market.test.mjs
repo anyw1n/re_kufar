@@ -234,7 +234,6 @@ test('formats history, daily counts and observed lifetime with MarkdownV2 escapi
     assert.ok(text.includes('Вернулись за 7 дней: 2'));
     assert.ok(text.includes('02\\.11: \\+10 / −4'));
     assert.ok(text.includes('\\~2,5 дн\\. \\(наблюдений: 2\\)'));
-    assert.ok(text.includes('оно не подтверждает аренду'));
     assert.ok(!text.includes('История за 7 дней пока неполная'));
     assert.ok((formatStatistics([], 'Минск') + text).length < 4096);
 });
