@@ -17,7 +17,9 @@ import * as logger from 'firebase-functions/logger';
 import { setFiltersConversation } from './conversations';
 import * as db from './db';
 import { mainMenuCustomKeyboard } from './keyboards';
-import { fetchAllAds, formatStatistics } from './statistics';
+import { getTrackingCity } from './market';
+import { marketStore } from './market-tracker';
+import { fetchAllAds, formatMarketStatistics, formatStatistics } from './statistics';
 import { getCityDisplayName, getRoomsDisplayName } from './types';
 
 const {
@@ -123,9 +125,21 @@ bot.hears('📊 Статистика', async (ctx) => {
 
     // Fire-and-forget: compute stats in background to avoid webhook timeout
     fetchAllAds(user.filters.city)
-        .then((ads) => {
+        .then(async (ads) => {
             const cityName = getCityDisplayName(user.filters.city);
-            const text = formatStatistics(ads, cityName);
+            const trackedCity = getTrackingCity();
+            let history: string;
+            if (user.filters.city !== trackedCity) {
+                history = `🕓 История собирается только для города ${getCityDisplayName(trackedCity)}\\.`;
+            } else {
+                try {
+                    history = formatMarketStatistics(await marketStore.getStatistics(trackedCity));
+                } catch (error) {
+                    logger.error('Error loading market history', error);
+                    history = '🕓 Не удалось загрузить историю объявлений\\. Попробуйте позже\\.';
+                }
+            }
+            const text = `${formatStatistics(ads, cityName)}\n\n${history}`;
             return bot.api.editMessageText(ctx.chatId, msg.message_id, text, {
                 parse_mode: 'MarkdownV2',
             });

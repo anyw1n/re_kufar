@@ -6,7 +6,7 @@ import { type Filters, type User } from './types';
 
 initializeApp();
 
-const db = getFirestore();
+export const db = getFirestore();
 const usersCollection = db.collection('users');
 
 /**

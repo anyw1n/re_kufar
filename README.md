@@ -108,14 +108,86 @@ Built with Firebase Functions, Firestore, and Grammy.
 - `npm run lint` - Run ESLint
 - `npm run build` - Compile TypeScript to JavaScript
 - `npm run build:watch` - Watch mode for TypeScript compilation
+- `npm test` - Build and run price, lifecycle, persistence recovery, pagination, and report tests
 - `npm run serve` - Start Firebase emulators
-- `npm run deploy` - Deploy functions to Firebase
+- `npm run deploy` - Deploy functions and Firestore Security Rules to Firebase
 - `npm run logs` - View function logs
 
 ## Functions
 
 - `tgWebhook` (HTTPS): Telegram webhook endpoint; sets the webhook to `WEBHOOK_URL` on cold start.
 - `kufarScraper` (Scheduled): In production runs every minute to poll Kufar and push new ads. In local emulators it is exposed as `http://localhost:5001/<project-id>/us-central1/kufarScraper` for manual triggering.
+- `marketTracker` (Scheduled): Runs hourly for the one city configured by
+  `MARKET_TRACKING_CITY`, independently of users and notification subscriptions.
+  In local emulators, trigger it manually at
+  `http://localhost:5001/<project-id>/us-central1/marketTracker`.
+
+## Statistics
+
+The bot's `📊 Статистика` menu fetches all rental ads for the selected city, including
+owner and agency listings, without applying the user's price or room filters.
+The report includes ad counts, minimum/maximum/average/median prices, price
+percentiles **P10, P25, P75, P90**, room distribution, and owner/agency counts.
+
+Price calculations include only valid, positive USD prices below 10,000 USD. The
+report shows the number of ads included in the price sample; ad and room counts
+still include all listings. Room averages use only valid prices in each room group.
+If no valid prices remain, the report indicates that price data is unavailable.
+
+Percentiles use linear interpolation at index `(n - 1) * p` in the sorted price
+sample, where `p` is 0.10, 0.25, 0.75, or 0.90. For example, prices of 100, 200,
+400, and 500 USD yield P10 = 130, P25 = 175, P75 = 425, and P90 = 470 USD.
+Calculations retain cents; displayed prices are rounded to whole dollars.
+
+### Market history
+
+Set `MARKET_TRACKING_CITY=minsk` in `functions/.env.prod` or `.env.local` to choose
+the single city whose listings are tracked. Supported values are `minsk` and
+`gomel`; omitting the setting defaults to `minsk`. Invalid values fail explicitly.
+Only that city's history is collected. Users can still request current price
+statistics for either city using their existing city filter.
+
+The history section in `📊 Статистика` includes:
+
+- New IDs and confirmed disappearances over the last **24 hours** and **7 days**.
+- Daily new/disappeared counts for the last seven calendar dates in **Europe/Minsk**,
+  including the current partial day. Days without successful observations say so.
+- The ratio `new / disappeared` for each rolling period. With no disappearances,
+  the ratio is undefined and the report states this instead of displaying infinity.
+- Returned IDs as a separate count, preserving their identity instead of counting
+  them as new again.
+- The median observed lifetime in days for eligible episodes whose disappearance
+  was confirmed in the last seven days, together with the sample size.
+
+History begins with the first successful run after deployment. That run is a
+**baseline**: existing listings are stored without being counted as new. No past
+activity is reconstructed. New listings are counted when their ID is first seen,
+not using Kufar's `list_time`, which may change when an ad is promoted or updated.
+These counts describe observed ad IDs, not unique apartments.
+
+A disappearance requires absence from **two consecutive complete successful
+observations**. Failed requests, malformed responses, repeating cursors and
+incomplete pagination do not update listing status. Duplicate IDs across pages are
+deduplicated; the unique count must reach at least the largest total reported
+during pagination. Truncated observations are restarted from the first page, up
+to three attempts within a shared three-minute deadline; failures are discarded
+without recording disappearances. Manual/retried runs
+less than 30 minutes apart are skipped. Disappearances are dated at the confirming
+observation and do **not** prove that an apartment was rented.
+
+Lifetime is estimated from an episode's first observation to its first absence,
+once that absence is confirmed. The hourly interval limits its precision.
+Baseline listings and still-active episodes do not contribute to the median.
+Episodes spanning an observation gap over 2.5 hours are excluded from lifetime
+estimates; returning IDs start another episode. The median therefore describes
+completed observed episodes, rather than the lifetime of all market inventory.
+Reporting windows with insufficient history or long gaps are marked incomplete.
+
+Each full ID snapshot is saved before lifecycle updates begin. A city lease
+prevents overlapping collectors, and deterministic per-run events make partial
+writes resumable. Only completed runs are included in reports. Interrupted runs
+are resumed before fetching a newer snapshot. History is retained in Firestore
+when switching the configured city; collection continues only for the selected city.
 
 ## Environment Variables
 
@@ -123,6 +195,7 @@ Defined in `.env.local` / `.env.prod`:
 
 - `BOT_TOKEN` – Telegram bot token from BotFather.
 - `WEBHOOK_URL` – HTTPS URL of the deployed `tgWebhook` function.
+- `MARKET_TRACKING_CITY` – city for hourly market history: `minsk` (default) or `gomel`.
 
 ## Data Model
 
@@ -130,6 +203,23 @@ Defined in `.env.local` / `.env.prod`:
   - `filters` – user-selected `city`, `minCost`, `maxCost`, `rooms[]`
   - `notificationsEnabled` – whether the user receives updates
   - `lastAdTime` – timestamp of the last ad sent
+- Collection `marketCities/{city}`
+  - `trackingStartedAt`, `lastSnapshotAt` – timestamps in milliseconds
+  - `pendingRunId`, `leaseOwner`, `leaseExpiresAt` – resumable run and worker lease
+  - Subcollection `ads/{adId}` – first/last observation, current visibility episode,
+    lifetime eligibility, absence confirmations, and active/missing/removed status
+  - Subcollection `runs/{runId}` – observation timestamp, baseline flag, completion
+    status, and aggregate counts/lifetime samples for that observation
+    - `pages/{page}` – complete observed ID set, stored in chunks
+    - `events/{adId}` – idempotent new/disappeared/returned events
+
+## Firestore access
+
+Firestore is a server-only backend for this bot. Security Rules deny direct
+client reads and writes for every collection, including users and market history.
+Cloud Functions use the Admin SDK and IAM, so they retain database access without
+collection-specific client rules. The deploy script publishes these rules together
+with the functions.
 
 ## License
 
