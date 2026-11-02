@@ -105,6 +105,7 @@ class FakeCollection {
 
 function matches(data, { field, operator, value }) {
     switch (operator) {
+        case '==': return data[field] === value;
         case 'in': return value.includes(data[field]);
         case '>=': return data[field] >= value;
         case '<=': return data[field] <= value;

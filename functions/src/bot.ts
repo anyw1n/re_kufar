@@ -3,7 +3,7 @@ import {
     createConversation,
     type ConversationFlavor,
 } from '@grammyjs/conversations';
-import { Bot, webhookCallback, type Context } from 'grammy';
+import { Api, Bot, webhookCallback, type Context } from 'grammy';
 import {
     type ForceReply,
     type InlineKeyboardMarkup,
@@ -17,9 +17,7 @@ import * as logger from 'firebase-functions/logger';
 import { setFiltersConversation } from './conversations';
 import * as db from './db';
 import { mainMenuCustomKeyboard } from './keyboards';
-import { getTrackingCity } from './market';
-import { marketStore } from './market-tracker';
-import { fetchAllAds, formatMarketStatistics, formatStatistics } from './statistics';
+import { getStatisticsReport } from './statistics-report';
 import { getCityDisplayName, getRoomsDisplayName } from './types';
 
 const {
@@ -28,6 +26,7 @@ const {
 } = process.env;
 
 const bot = new Bot<ConversationFlavor<Context>>(token!);
+const statisticsApi = new Api(token!, { timeoutSeconds: 30 });
 bot.use(conversations());
 bot.use(createConversation(setFiltersConversation));
 
@@ -49,6 +48,11 @@ export const sendPhoto = (
         reply_markup?: InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | ForceReply,
     }
 ) => bot.api.sendPhoto(chatId, imageUrl, other);
+
+export async function sendStatisticsMessage(chatId: number, text: string): Promise<number> {
+    const message = await statisticsApi.sendMessage(chatId, text, { parse_mode: 'MarkdownV2' });
+    return message.message_id;
+}
 
 /**
  * Handles the /start command
@@ -124,22 +128,8 @@ bot.hears('📊 Статистика', async (ctx) => {
     });
 
     // Fire-and-forget: compute stats in background to avoid webhook timeout
-    fetchAllAds(user.filters.city)
-        .then(async (ads) => {
-            const cityName = getCityDisplayName(user.filters.city);
-            const trackedCity = getTrackingCity();
-            let history: string;
-            if (user.filters.city !== trackedCity) {
-                history = `🕓 История собирается только для города ${getCityDisplayName(trackedCity)}\\.`;
-            } else {
-                try {
-                    history = formatMarketStatistics(await marketStore.getStatistics(trackedCity));
-                } catch (error) {
-                    logger.error('Error loading market history', error);
-                    history = '🕓 Не удалось загрузить историю объявлений\\. Попробуйте позже\\.';
-                }
-            }
-            const text = `${formatStatistics(ads, cityName)}\n\n${history}`;
+    getStatisticsReport(user.filters.city)
+        .then((text) => {
             return bot.api.editMessageText(ctx.chatId, msg.message_id, text, {
                 parse_mode: 'MarkdownV2',
             });

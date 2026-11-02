@@ -121,6 +121,10 @@ Built with Firebase Functions, Firestore, and Grammy.
   `MARKET_TRACKING_CITY`, independently of users and notification subscriptions.
   In local emulators, trigger it manually at
   `http://localhost:5001/<project-id>/us-central1/marketTracker`.
+- `dailyStatistics` (Scheduled): Sends the statistics report every day at **20:00
+  Europe/Minsk** to users with notifications enabled. Change the time using
+  `DAILY_STATISTICS_TIME=HH:MM`. In local emulators, trigger it manually at
+  `http://localhost:5001/<project-id>/us-central1/dailyStatistics`.
 
 ## Statistics
 
@@ -189,6 +193,26 @@ writes resumable. Only completed runs are included in reports. Interrupted runs
 are resumed before fetching a newer snapshot. History is retained in Firestore
 when switching the configured city; collection continues only for the selected city.
 
+### Evening delivery
+
+The daily report uses the same contents as the `📊 Статистика` button, prefixed with
+an evening heading. Each user receives current statistics for the city in their
+filters; market history remains limited to `MARKET_TRACKING_CITY`. Reports are
+loaded once per requested city and shared between its recipients for that run.
+No ads are fetched when there are no subscribed users.
+
+The user's notification flag and city are checked again in a Firestore transaction
+after the report is ready, immediately before reserving the delivery. Disabling
+notifications stops both new-ad notifications and evening reports. Successful
+deliveries are recorded per user and Minsk calendar date, so normal retries skip
+already delivered reports. One user's failure does not prevent other deliveries;
+the scheduled job retries failed attempts up to three times with backoff.
+
+Delivery leases recover interrupted workers. Telegram sending and Firestore
+acknowledgment are separate operations: an ambiguous Telegram timeout or a crash
+after Telegram accepts a message but before the database records it can still
+result in a duplicate on a later retry.
+
 ## Environment Variables
 
 Defined in `.env.local` / `.env.prod`:
@@ -196,6 +220,7 @@ Defined in `.env.local` / `.env.prod`:
 - `BOT_TOKEN` – Telegram bot token from BotFather.
 - `WEBHOOK_URL` – HTTPS URL of the deployed `tgWebhook` function.
 - `MARKET_TRACKING_CITY` – city for hourly market history: `minsk` (default) or `gomel`.
+- `DAILY_STATISTICS_TIME` – daily report time in `Europe/Minsk`, `HH:MM` (default `20:00`).
 
 ## Data Model
 
@@ -212,6 +237,8 @@ Defined in `.env.local` / `.env.prod`:
     status, and aggregate counts/lifetime samples for that observation
     - `pages/{page}` – complete observed ID set, stored in chunks
     - `events/{adId}` – idempotent new/disappeared/returned events
+- `statisticsDeliveries/{YYYY-MM-DD}/recipients/{chatId}` – delivery status, worker
+  lease, Telegram message ID, and acknowledgment timestamp for each evening report
 
 ## Firestore access
 
