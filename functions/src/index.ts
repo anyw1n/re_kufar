@@ -5,17 +5,40 @@ dotenv.config({ path: `.env.${env}` });
 
 import { onRequest } from 'firebase-functions/https';
 import { onSchedule } from 'firebase-functions/scheduler';
+import { onDocumentCreated } from 'firebase-functions/firestore';
 import * as logger from 'firebase-functions/logger';
 
-import { createWebhook, sendStatisticsMessage } from './bot';
+import { createWebhook, editStatisticsMessage, isPermanentStatisticsDeliveryError, sendStatisticsMessage } from './bot';
 import { deliverDailyStatistics, getDailyStatisticsSchedule } from './daily-statistics';
 import { DailyStatisticsStore } from './daily-statistics-store';
 import { db } from './db';
 import { checkNewAds } from './parser';
 import { trackMarket } from './market-tracker';
 import { getStatisticsReport } from './statistics-report';
+import { processStatisticsRequest, StatisticsRequestStore } from './statistics-requests';
 
 const dailyStatisticsStore = new DailyStatisticsStore(db);
+const statisticsRequests = new StatisticsRequestStore(db);
+
+export const statisticsRequestWorker = onDocumentCreated({
+    document: 'statisticsRequests/{requestId}',
+    timeoutSeconds: 240,
+    maxInstances: 2,
+    concurrency: 1,
+    retry: true,
+}, async (event) => {
+    const requestId = event.params.requestId;
+    const result = await processStatisticsRequest(requestId, {
+        store: statisticsRequests,
+        loadReport: getStatisticsReport,
+        editMessage: editStatisticsMessage,
+        isPermanentDeliveryError: isPermanentStatisticsDeliveryError,
+        onError: (error) => logger.error('[statistics-request] Processing error', {
+            requestId, message: error instanceof Error ? error.message : 'Unknown error',
+        }),
+    });
+    logger.info('[statistics-request] Processing complete', { requestId, result });
+});
 
 async function sendDailyStatistics(scheduleTime: string): Promise<void> {
     const totals = await deliverDailyStatistics(scheduleTime, {

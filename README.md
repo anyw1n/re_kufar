@@ -72,7 +72,9 @@ Built with Firebase Functions, Firestore, and Grammy.
    WEBHOOK_URL=https://<region>-<project>.cloudfunctions.net/tgWebhook
    ```
 
-   `WEBHOOK_URL` should point to the deployed HTTPS function that Telegram will call. Deploying sets the webhook automatically.
+   `WEBHOOK_URL` should point to the deployed HTTPS function that Telegram will call.
+   The deploy script registers it after deployment; run `npm run register-webhook`
+   separately when deploying through the Firebase CLI directly.
 
 6. **Deploy to Firebase**
 
@@ -111,11 +113,17 @@ Built with Firebase Functions, Firestore, and Grammy.
 - `npm test` - Build and run price, lifecycle, persistence recovery, pagination, and report tests
 - `npm run serve` - Start Firebase emulators
 - `npm run deploy` - Deploy functions and Firestore Security Rules to Firebase
+- `npm run register-webhook` - Register the Telegram webhook once after deployment
 - `npm run logs` - View function logs
 
 ## Functions
 
-- `tgWebhook` (HTTPS): Telegram webhook endpoint; sets the webhook to `WEBHOOK_URL` on cold start.
+- `tgWebhook` (HTTPS): Telegram webhook endpoint. Registration is performed after
+  deployment rather than on every function's cold start.
+- `statisticsRequestWorker` (Firestore): Processes `statisticsRequests/{requestId}`
+  created by the statistics button and updates its loading message with the report.
+  The webhook returns after the request has been queued; the worker awaits all
+  fetching and Telegram API calls before its invocation completes.
 - `kufarScraper` (Scheduled): In production runs every minute to poll Kufar and push new ads. In local emulators it is exposed as `http://localhost:5001/<project-id>/us-central1/kufarScraper` for manual triggering.
 - `marketTracker` (Scheduled): Runs hourly for the one city configured by
   `MARKET_TRACKING_CITY`, independently of users and notification subscriptions.
@@ -142,6 +150,11 @@ Percentiles use linear interpolation at index `(n - 1) * p` in the sorted price
 sample, where `p` is 0.10, 0.25, 0.75, or 0.90. For example, prices of 100, 200,
 400, and 500 USD yield P10 = 130, P25 = 175, P75 = 425, and P90 = 470 USD.
 Calculations retain cents; displayed prices are rounded to whole dollars.
+
+Manual requests run in a durable Firestore queue so their network operations do
+not depend on CPU availability after the Telegram webhook has returned. Requests
+are deduplicated by Telegram update ID. The rendered report is saved before
+editing the original loading message, allowing delivery retries without refetching.
 
 ### Market history
 
@@ -178,6 +191,11 @@ to three attempts within a shared three-minute deadline; failures are discarded
 without recording disappearances. Manual/retried runs
 less than 30 minutes apart are skipped. Disappearances are dated at the confirming
 observation and do **not** prove that an apartment was rented.
+
+Individual page requests also retry timeouts, connection failures, HTTP 408/429
+and server errors up to three times, within the same overall deadline. Successful
+earlier pages are retained during page retries. Permanent HTTP errors and invalid
+response structures fail without updating listing status.
 
 Lifetime is estimated from an episode's first observation to its first absence,
 once that absence is confirmed. The hourly interval limits its precision.
@@ -239,6 +257,8 @@ Defined in `.env.local` / `.env.prod`:
     - `events/{adId}` – idempotent new/disappeared/returned events
 - `statisticsDeliveries/{YYYY-MM-DD}/recipients/{chatId}` – delivery status, worker
   lease, Telegram message ID, and acknowledgment timestamp for each evening report
+- `statisticsRequests/{updateId}` – queued manual report, original chat/message,
+  processing lease, rendered report, and terminal delivery status
 
 ## Firestore access
 

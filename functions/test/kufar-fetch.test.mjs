@@ -72,9 +72,50 @@ test('restarts a truncated live catalog from scratch without carrying over IDs',
 
 test('a later HTTP failure rejects the entire observation instead of returning a partial city', async () => {
     const { fetcher } = pagesFetcher([
-        page([1, 2], 3, 'next'), new Response('unavailable', { status: 503 }),
+        page([1, 2], 3, 'next'),
+        ...Array.from({ length: 3 }, () => new Response('unavailable', { status: 503 })),
     ]);
     await assert.rejects(fetchAllAds(City.Minsk, fetcher), /HTTP 503/);
+});
+
+test('retries a timed-out page without fetching or accumulating earlier pages again', async () => {
+    const { fetcher, urls } = pagesFetcher([
+        page([1, 2], 3, 'next'), new DOMException('request timed out', 'TimeoutError'), page([3], 3),
+    ]);
+    const ads = await fetchAllAds(City.Gomel, fetcher);
+    assert.deepEqual(ads.map((ad) => ad.ad_id), [1, 2, 3]);
+    assert.equal(urls.length, 3);
+    assert.equal(urls[0].searchParams.get('cursor'), null);
+    assert.equal(urls[1].searchParams.get('cursor'), 'next');
+    assert.equal(urls[2].searchParams.get('cursor'), 'next');
+});
+
+test('recovers from a temporary network failure and HTTP 503', async () => {
+    const { fetcher } = pagesFetcher([
+        new TypeError('fetch failed'), new Response('unavailable', { status: 503 }), page([1], 1),
+    ]);
+    assert.deepEqual((await fetchAllAds(City.Gomel, fetcher)).map((ad) => ad.ad_id), [1]);
+});
+
+test('stops after three timeouts and never returns the partial city', async () => {
+    const { fetcher, urls } = pagesFetcher([
+        page([1], 2, 'next'), ...Array.from({ length: 3 }, () => new DOMException('timeout', 'TimeoutError')),
+    ]);
+    await assert.rejects(fetchAllAds(City.Gomel, fetcher), /timeout/);
+    assert.equal(urls.length, 4);
+});
+
+test('does not retry a permanent HTTP error', async () => {
+    const { fetcher, urls } = pagesFetcher([new Response('bad request', { status: 400 })]);
+    await assert.rejects(fetchAllAds(City.Gomel, fetcher), /HTTP 400/);
+    assert.equal(urls.length, 1);
+});
+
+test('recovers from a rate-limited page', async () => {
+    const { fetcher } = pagesFetcher([
+        new Response('rate limited', { status: 429, headers: { 'retry-after': '1' } }), page([1], 1),
+    ]);
+    assert.deepEqual((await fetchAllAds(City.Gomel, fetcher)).map((ad) => ad.ad_id), [1]);
 });
 
 test('a network failure rejects the entire observation', async () => {

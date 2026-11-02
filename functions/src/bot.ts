@@ -3,7 +3,7 @@ import {
     createConversation,
     type ConversationFlavor,
 } from '@grammyjs/conversations';
-import { Api, Bot, webhookCallback, type Context } from 'grammy';
+import { Api, Bot, GrammyError, webhookCallback, type Context } from 'grammy';
 import {
     type ForceReply,
     type InlineKeyboardMarkup,
@@ -17,25 +17,21 @@ import * as logger from 'firebase-functions/logger';
 import { setFiltersConversation } from './conversations';
 import * as db from './db';
 import { mainMenuCustomKeyboard } from './keyboards';
-import { getStatisticsReport } from './statistics-report';
+import { enqueueStatisticsRequest, StatisticsRequestStore } from './statistics-requests';
 import { getCityDisplayName, getRoomsDisplayName } from './types';
 
-const {
-    BOT_TOKEN: token,
-    WEBHOOK_URL: webhookUrl,
-} = process.env;
+const { BOT_TOKEN: token } = process.env;
 
 const bot = new Bot<ConversationFlavor<Context>>(token!);
 const statisticsApi = new Api(token!, { timeoutSeconds: 30 });
+const statisticsRequests = new StatisticsRequestStore(db.db);
 bot.use(conversations());
 bot.use(createConversation(setFiltersConversation));
 
 /**
- * Creates and configures a webhook for the Telegram bot
+ * Creates the Telegram webhook handler. Registration is a deployment step.
  */
 export function createWebhook() {
-    logger.info('Setting up webhook for Telegram bot...');
-    bot.api.setWebhook(webhookUrl!);
     return webhookCallback(bot, 'express');
 }
 
@@ -52,6 +48,19 @@ export const sendPhoto = (
 export async function sendStatisticsMessage(chatId: number, text: string): Promise<number> {
     const message = await statisticsApi.sendMessage(chatId, text, { parse_mode: 'MarkdownV2' });
     return message.message_id;
+}
+
+export async function editStatisticsMessage(chatId: number, messageId: number, text: string): Promise<void> {
+    try {
+        await statisticsApi.editMessageText(chatId, messageId, text, { parse_mode: 'MarkdownV2' });
+    } catch (error) {
+        if (error instanceof GrammyError && error.error_code === 400 && error.description.includes('message is not modified')) return;
+        throw error;
+    }
+}
+
+export function isPermanentStatisticsDeliveryError(error: unknown): boolean {
+    return error instanceof GrammyError && (error.error_code === 400 || error.error_code === 403);
 }
 
 /**
@@ -123,25 +132,12 @@ bot.hears('📊 Статистика', async (ctx) => {
         return ctx.reply('Сначала настрой фильтры через /start');
     }
 
-    const msg = await ctx.reply('⏳ Собираю статистику\\.\\.\\.', {
-        parse_mode: 'MarkdownV2',
+    return enqueueStatisticsRequest(String(ctx.update.update_id), ctx.chatId, user.filters.city, {
+        store: statisticsRequests,
+        showLoading: async () => {
+            const message = await ctx.reply('⏳ Собираю статистику\\.\\.\\.', { parse_mode: 'MarkdownV2' });
+            return message.message_id;
+        },
+        removeLoading: (messageId) => ctx.api.deleteMessage(ctx.chatId, messageId),
     });
-
-    // Fire-and-forget: compute stats in background to avoid webhook timeout
-    getStatisticsReport(user.filters.city)
-        .then((text) => {
-            return bot.api.editMessageText(ctx.chatId, msg.message_id, text, {
-                parse_mode: 'MarkdownV2',
-            });
-        })
-        .catch((error) => {
-            logger.error('Error fetching statistics', error);
-            return bot.api.editMessageText(
-                ctx.chatId,
-                msg.message_id,
-                '❌ Не удалось получить статистику\\. Попробуйте позже\\.',
-                { parse_mode: 'MarkdownV2' },
-            );
-        });
-    return msg;
 });

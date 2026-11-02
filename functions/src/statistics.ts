@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import * as logger from 'firebase-functions/logger';
 
 import { type MarketStatistics, type PeriodStatistics } from './market';
@@ -72,6 +73,43 @@ const makeStatsRequestUrl = (city: City, cursor?: string): string => {
 
 class IncompleteKufarObservationError extends Error {}
 
+class TemporaryKufarHttpError extends Error {
+    constructor(message: string, readonly retryAfterMs = 0) {
+        super(message);
+    }
+}
+
+async function fetchAdsPage(url: string, fetcher: typeof fetch, deadline: number): Promise<KufarResponse> {
+    let attempt = 0;
+    while (true) {
+        try {
+            const timeout = Math.min(20000, deadline - Date.now());
+            if (timeout <= 0) throw new Error('Kufar observation deadline exceeded');
+            const response = await fetcher(url, { signal: AbortSignal.timeout(timeout) });
+            if (!response.ok) {
+                await response.body?.cancel();
+                const message = `Kufar returned HTTP ${response.status}`;
+                if (response.status === 408 || response.status === 429 || response.status >= 500) {
+                    const retryAfter = Number(response.headers.get('retry-after'));
+                    throw new TemporaryKufarHttpError(message,
+                        Number.isFinite(retryAfter) ? Math.max(0, retryAfter * 1000) : 0);
+                }
+                throw new Error(message);
+            }
+            return await response.json() as KufarResponse;
+        } catch (error) {
+            const temporary = error instanceof TemporaryKufarHttpError || error instanceof TypeError ||
+                (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError'));
+            const backoff = Math.max(250 * (attempt + 1), error instanceof TemporaryKufarHttpError ? error.retryAfterMs : 0);
+            if (!temporary || ++attempt >= 3 || Date.now() + backoff >= deadline) throw error;
+            logger.warn('[statistics] Retrying a temporary Kufar page failure', {
+                attempt, reason: error instanceof Error ? error.message : 'Unknown error',
+            });
+            await delay(backoff);
+        }
+    }
+}
+
 async function fetchAdsSnapshot(city: City, fetcher: typeof fetch, deadline: number): Promise<Ad[]> {
     const allAds = new Map<number, Ad>();
     const cursors = new Set<string>();
@@ -85,10 +123,7 @@ async function fetchAdsSnapshot(city: City, fetcher: typeof fetch, deadline: num
         }
         const url = makeStatsRequestUrl(city, cursor);
         logger.info(`[statistics] Fetching ads page (accumulated: ${allAds.size})`);
-        const response = await fetcher(url, { signal: AbortSignal.timeout(20000) });
-        if (!response.ok) throw new Error(`Kufar returned HTTP ${response.status}`);
-
-        const data = (await response.json()) as KufarResponse;
+        const data = await fetchAdsPage(url, fetcher, deadline);
         if (!data || !Array.isArray(data.ads) || !Number.isSafeInteger(data.total) || data.total < data.ads.length) {
             throw new Error('Invalid Kufar ads response');
         }

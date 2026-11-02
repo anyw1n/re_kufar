@@ -5,10 +5,11 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "test": "npm run build && node --test test/*.test.mjs",
+    "register-webhook": "npm run build && node lib/register-webhook.js",
     "serve": "npm run build && firebase emulators:start --only functions,firestore",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
-    "deploy": "firebase deploy --only functions,firestore:rules",
+    "deploy": "firebase deploy --only functions,firestore:rules && node lib/register-webhook.js",
     "logs": "firebase functions:log"
   },
   "engines": {
