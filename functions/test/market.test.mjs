@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-    calculateMarketStatistics, DAY_MS, getTrackingCity, observeAd, summarizeEvents,
+    calculateMarketStatistics, DAY_MS, getTrackingCity, observeAd, parseListTime, summarizeEvents,
 } from '../lib/market.js';
 import { formatMarketStatistics, formatStatistics } from '../lib/statistics.js';
 import { City } from '../lib/types.js';
@@ -10,8 +10,8 @@ import { City } from '../lib/types.js';
 const HOUR = DAY_MS / 24;
 const START = Date.parse('2026-10-20T09:00:00Z');
 
-function snapshot(hour, baseline = false) {
-    return { id: `run-${hour}`, observedAt: START + hour * HOUR, baseline, adIds: [] };
+function snapshot(hour, baseline = false, listTimes = {}) {
+    return { id: `run-${hour}`, observedAt: START + hour * HOUR, baseline, adIds: [], listTimes };
 }
 
 function completed(observedAt, newAds = 0, disappearedAds = 0, returnedAds = 0, lifetimesMs = []) {
@@ -62,6 +62,98 @@ test('a first-seen ID after the baseline is counted exactly once', () => {
     assert.equal(second.event, null);
     assert.equal(second.ad.firstSeenAt, first.ad.firstSeenAt);
     assert.equal(second.ad.lastSeenAt, START + 2 * HOUR);
+});
+
+test('publication dates accept valid past dates and reject missing, invalid and future values', () => {
+    assert.equal(parseListTime('2026-10-19T12:00:00+03:00', START), START - DAY_MS);
+    assert.equal(parseListTime(new Date(START).toISOString(), START), START);
+    for (const value of [undefined, null, '', 'invalid', '1970-01-01T00:00:00Z',
+        new Date(START + 1).toISOString()]) {
+        assert.equal(parseListTime(value, START), null);
+    }
+});
+
+test('the first publication date defines lifetime and later promotions cannot change it', () => {
+    const publishedAt = START - 3 * DAY_MS;
+    const first = observeAd(null, 42, true, snapshot(0, true, { 42: publishedAt }));
+    const promoted = observeAd(first.ad, 42, true, snapshot(1, false, { 42: START + HOUR }));
+    const missing = observeAd(promoted.ad, 42, false, snapshot(2));
+    const removed = observeAd(missing.ad, 42, false, snapshot(3));
+
+    assert.equal(first.event, null);
+    assert.equal(first.ad.firstSeenAt, START);
+    assert.equal(first.ad.firstListTime, publishedAt);
+    assert.equal(first.ad.lifetimeEligible, true);
+    assert.equal(promoted.ad.firstListTime, publishedAt);
+    assert.equal(promoted.ad.episodeStartedAt, publishedAt);
+    assert.equal(removed.event.lifetimeMs, 3 * DAY_MS + 2 * HOUR);
+});
+
+test('missing dates fall back to first observation and are not filled with later values', () => {
+    const first = observeAd(null, 42, true, snapshot(1));
+    const updated = observeAd(first.ad, 42, true, snapshot(2, false, { 42: START }));
+
+    assert.equal(first.ad.firstListTime, null);
+    assert.equal(updated.ad.firstListTime, null);
+    assert.equal(updated.ad.episodeStartedAt, START + HOUR);
+    assert.equal(updated.ad.lifetimeEligible, true);
+});
+
+test('legacy dates are filled only when earlier than firstSeenAt, and then frozen', () => {
+    const legacy = { ...observeAd(null, 42, true, snapshot(1)).ad };
+    delete legacy.firstListTime;
+    const backfilled = observeAd(legacy, 42, true, snapshot(2, false, { 42: START - DAY_MS }));
+    const promoted = observeAd(backfilled.ad, 42, true, snapshot(3, false, { 42: START + 2 * HOUR }));
+
+    assert.equal(backfilled.ad.firstSeenAt, START + HOUR);
+    assert.equal(backfilled.ad.firstListTime, START - DAY_MS);
+    assert.equal(backfilled.ad.episodeStartedAt, START - DAY_MS);
+    assert.equal(backfilled.ad.lifetimeEligible, true);
+    assert.equal(promoted.ad.firstListTime, START - DAY_MS);
+    for (const listTime of [legacy.firstSeenAt, legacy.firstSeenAt + 1, null]) {
+        const result = observeAd(legacy, 42, true, snapshot(2, false, { 42: listTime }));
+        assert.equal(result.ad.firstListTime, null);
+        assert.equal(result.ad.episodeStartedAt, legacy.episodeStartedAt);
+    }
+});
+
+test('backfilling a legacy baseline needs continuous coverage to restore lifetime eligibility', () => {
+    const legacy = { ...observeAd(null, 42, true, snapshot(0, true)).ad };
+    delete legacy.firstListTime;
+    const observation = snapshot(1, false, { 42: START - DAY_MS });
+    const covered = observeAd(legacy, 42, true, observation, START);
+    const unknown = observeAd(legacy, 42, true, observation);
+
+    assert.equal(covered.ad.firstListTime, START - DAY_MS);
+    assert.equal(covered.ad.lifetimeEligible, true);
+    assert.equal(unknown.ad.firstListTime, START - DAY_MS);
+    assert.equal(unknown.ad.lifetimeEligible, false);
+});
+
+test('a provisional absence does not prevent a legacy date from being filled when the ad returns', () => {
+    const legacy = { ...observeAd(null, 42, true, snapshot(0, true)).ad };
+    delete legacy.firstListTime;
+    const missing = observeAd(legacy, 42, false, snapshot(1));
+    const seen = observeAd(missing.ad, 42, true, snapshot(2, false, { 42: START - DAY_MS }), START);
+
+    assert.equal(Object.hasOwn(missing.ad, 'firstListTime'), false);
+    assert.equal(seen.ad.firstListTime, START - DAY_MS);
+    assert.equal(seen.ad.lifetimeEligible, true);
+});
+
+test('a returning ID retains its first publication date but starts a separate lifetime episode', () => {
+    const first = observeAd(null, 42, true, snapshot(0, true, { 42: START - DAY_MS }));
+    const missing = observeAd(first.ad, 42, false, snapshot(1));
+    const removed = observeAd(missing.ad, 42, false, snapshot(2));
+    const returned = observeAd(removed.ad, 42, true, snapshot(10, false, { 42: START + 10 * HOUR }));
+    const missingAgain = observeAd(returned.ad, 42, false, snapshot(11));
+    const removedAgain = observeAd(missingAgain.ad, 42, false, snapshot(12));
+
+    assert.equal(returned.event.type, 'returned');
+    assert.equal(returned.ad.firstListTime, START - DAY_MS);
+    assert.equal(returned.ad.firstSeenAt, START);
+    assert.equal(returned.ad.episodeStartedAt, START + 10 * HOUR);
+    assert.equal(removedAgain.event.lifetimeMs, HOUR);
 });
 
 test('one missing observation is provisional, two confirm disappearance', () => {

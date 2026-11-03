@@ -9,6 +9,8 @@ export const MISSING_SNAPSHOTS_TO_REMOVE = 2;
 export interface TrackedAd {
     adId: number;
     firstSeenAt: number;
+    // Absent only on records created before list_time was collected.
+    firstListTime?: number | null;
     lastSeenAt: number;
     episodeStartedAt: number;
     lifetimeEligible: boolean;
@@ -31,6 +33,8 @@ export interface MarketSnapshot {
     observedAt: number;
     baseline: boolean;
     adIds: number[];
+    // Absent in snapshots saved before publication dates were collected.
+    listTimes?: Record<number, number | null>;
 }
 
 export interface AdChange {
@@ -83,24 +87,43 @@ export function getTrackingCity(value = process.env.MARKET_TRACKING_CITY): City 
     }
 }
 
+/** Parses a valid, non-future publication date at observation time. */
+export function parseListTime(value: string | undefined, observedAt: number): number | null {
+    const timestamp = typeof value === 'string' ? Date.parse(value) : NaN;
+    return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= observedAt ? timestamp : null;
+}
+
+/** Start of the latest uninterrupted sequence of complete observations. */
+export function continuousObservationStart(timestamps: readonly number[]): number {
+    const sorted = [...timestamps].sort((a, b) => a - b);
+    let start = sorted[0] ?? Infinity;
+    for (let index = 1; index < sorted.length; index++) {
+        if (sorted[index] - sorted[index - 1] > MAX_OBSERVATION_GAP_MS) start = sorted[index];
+    }
+    return start;
+}
+
 /** Applies one complete observation; replaying the same run has no effect. */
 export function observeAd(
     previous: TrackedAd | null,
     adId: number,
     seen: boolean,
     snapshot: MarketSnapshot,
+    continuousSince = Infinity,
 ): AdChange | null {
     if (previous?.lastRunId === snapshot.id) return null;
 
     if (!previous) {
         if (!seen) return null;
+        const firstListTime = snapshot.listTimes?.[adId] ?? null;
         return {
             ad: {
                 adId,
                 firstSeenAt: snapshot.observedAt,
+                firstListTime,
                 lastSeenAt: snapshot.observedAt,
-                episodeStartedAt: snapshot.observedAt,
-                lifetimeEligible: !snapshot.baseline,
+                episodeStartedAt: firstListTime ?? snapshot.observedAt,
+                lifetimeEligible: firstListTime !== null || !snapshot.baseline,
                 missingSince: null,
                 missingSnapshots: 0,
                 removedAt: null,
@@ -115,12 +138,20 @@ export function observeAd(
 
     if (seen) {
         const returned = previous.status === 'removed';
+        const listTime = snapshot.listTimes?.[adId] ?? null;
+        const backfill = previous.firstListTime === undefined && listTime !== null && listTime < previous.firstSeenAt;
+        const firstListTime = backfill ? listTime : previous.firstListTime ?? null;
+        const backfilledFirstEpisode = backfill && previous.episodeStartedAt === previous.firstSeenAt;
+        const lifetimeEligible = previous.lifetimeEligible ||
+            (backfilledFirstEpisode && previous.firstSeenAt >= continuousSince);
         return {
             ad: {
                 ...previous,
+                firstListTime,
                 lastSeenAt: snapshot.observedAt,
-                episodeStartedAt: returned ? snapshot.observedAt : previous.episodeStartedAt,
-                lifetimeEligible: returned || (previous.lifetimeEligible &&
+                episodeStartedAt: returned ? snapshot.observedAt :
+                    backfilledFirstEpisode ? listTime : previous.episodeStartedAt,
+                lifetimeEligible: returned || (lifetimeEligible &&
                     snapshot.observedAt - previous.lastSeenAt <= MAX_OBSERVATION_GAP_MS),
                 missingSince: null,
                 missingSnapshots: 0,

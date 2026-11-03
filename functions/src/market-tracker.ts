@@ -28,7 +28,7 @@ export async function trackMarket(): Promise<void> {
         if (state.lastSnapshotAt !== null && Date.now() - state.lastSnapshotAt < MIN_SNAPSHOT_INTERVAL_MS) return;
 
         const ads = await fetchAllAds(city);
-        const snapshot = await marketStore.prepareSnapshot(city, owner, ads.map((ad) => ad.ad_id), Date.now());
+        const snapshot = await marketStore.prepareSnapshot(city, owner, ads, Date.now());
         await marketStore.applySnapshot(city, owner, snapshot);
         logger.info('[market] Observation complete', { city, ads: ads.length, baseline: snapshot.baseline });
     } finally {

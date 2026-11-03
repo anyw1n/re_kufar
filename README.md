@@ -173,7 +173,7 @@ The history section in `📊 Статистика` includes:
   the ratio is undefined and the report states this instead of displaying infinity.
 - Returned IDs as a separate count, preserving their identity instead of counting
   them as new again.
-- The median observed lifetime in days for eligible episodes whose disappearance
+- The median estimated lifetime in days for eligible episodes whose disappearance
   was confirmed in the last seven days, together with the sample size.
 
 History begins with the first successful run after deployment. That run is a
@@ -197,18 +197,36 @@ and server errors up to three times, within the same overall deadline. Successfu
 earlier pages are retained during page retries. Permanent HTTP errors and invalid
 response structures fail without updating listing status.
 
-Lifetime is estimated from an episode's first observation to its first absence,
-once that absence is confirmed. The hourly interval limits its precision.
-Baseline listings and still-active episodes do not contribute to the median.
+For a newly tracked ID, the valid `list_time` from its first observation is saved
+as `firstListTime` and never overwritten by subsequent updates or promotions. Its first lifetime is
+estimated from that date to its first absence, once the absence is confirmed.
+`firstSeenAt` separately records when the tracker first encountered the ID; new
+listing counts continue to use that observation. Missing, invalid, or future
+publication dates fall back to the first observation, with baseline listings
+without a valid date excluded from lifetime estimates. Dates already changed by
+promotions before the first observation cannot be reconstructed, so this remains
+an estimate of publication-to-disappearance time.
+
+Legacy records without `firstListTime` are filled on their next appearance only
+when the current valid `list_time` is strictly earlier than their `firstSeenAt`.
+For their first episode this earlier date becomes the lifetime start. Previously
+excluded baseline episodes become eligible only when stored completed runs prove
+continuous observation since `firstSeenAt`; earlier gaps remain excluded. Already
+completed historical events and summaries are not recalculated.
+
+The hourly interval limits disappearance precision. Still-active episodes do not
+contribute to the median.
 Episodes spanning an observation gap over 2.5 hours are excluded from lifetime
-estimates; returning IDs start another episode. The median therefore describes
-completed observed episodes, rather than the lifetime of all market inventory.
+estimates; returning IDs retain `firstListTime` and start another episode at their
+return observation, keeping time spent absent out of the new lifetime. The median
+therefore describes completed tracked episodes, rather than the lifetime of all
+market inventory.
 Reporting windows with insufficient history or long gaps are marked incomplete.
 
-Each full ID snapshot is saved before lifecycle updates begin. A city lease
-prevents overlapping collectors, and deterministic per-run events make partial
-writes resumable. Only completed runs are included in reports. Interrupted runs
-are resumed before fetching a newer snapshot. History is retained in Firestore
+Each full ID snapshot and its fetched publication dates are saved before lifecycle
+updates begin. A city lease prevents overlapping collectors, and deterministic
+per-run events make partial writes resumable. Only completed runs are included in
+reports. Interrupted runs are resumed before fetching a newer snapshot. History is retained in Firestore
 when switching the configured city; collection continues only for the selected city.
 
 ### Evening delivery
@@ -249,11 +267,12 @@ Defined in `.env.local` / `.env.prod`:
 - Collection `marketCities/{city}`
   - `trackingStartedAt`, `lastSnapshotAt` – timestamps in milliseconds
   - `pendingRunId`, `leaseOwner`, `leaseExpiresAt` – resumable run and worker lease
-  - Subcollection `ads/{adId}` – first/last observation, current visibility episode,
-    lifetime eligibility, absence confirmations, and active/missing/removed status
+  - Subcollection `ads/{adId}` – first/last observation, immutable `firstListTime`,
+    current visibility episode, lifetime eligibility, absence confirmations, and
+    active/missing/removed status
   - Subcollection `runs/{runId}` – observation timestamp, baseline flag, completion
     status, and aggregate counts/lifetime samples for that observation
-    - `pages/{page}` – complete observed ID set, stored in chunks
+    - `pages/{page}` – complete observed ID set and publication dates, stored in chunks
     - `events/{adId}` – idempotent new/disappeared/returned events
 - `statisticsDeliveries/{YYYY-MM-DD}/recipients/{chatId}` – delivery status, worker
   lease, Telegram message ID, and acknowledgment timestamp for each evening report

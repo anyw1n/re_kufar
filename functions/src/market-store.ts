@@ -2,9 +2,11 @@ import { type Firestore } from 'firebase-admin/firestore';
 
 import {
     calculateMarketStatistics,
+    continuousObservationStart,
     DAY_MS,
     MIN_SNAPSHOT_INTERVAL_MS,
     observeAd,
+    parseListTime,
     summarizeEvents,
     type CompletedSnapshot,
     type MarketEvent,
@@ -13,7 +15,7 @@ import {
     type SnapshotSummary,
     type TrackedAd,
 } from './market';
-import { type City } from './types';
+import { type Ad, type City } from './types';
 
 const LEASE_MS = 15 * 60 * 1000;
 const PAGE_SIZE = 500;
@@ -34,6 +36,7 @@ interface StoredRun {
     adCount: number;
     status: 'pending' | 'complete';
     summary: SnapshotSummary | null;
+    listTimesStored?: boolean;
 }
 
 function cityState(data: Partial<MarketCityState> = {}): MarketCityState {
@@ -89,18 +92,27 @@ export class MarketStore {
         });
     }
 
-    async prepareSnapshot(city: City, owner: string, adIds: number[], observedAt: number): Promise<MarketSnapshot> {
+    async prepareSnapshot(
+        city: City,
+        owner: string,
+        ads: readonly Pick<Ad, 'ad_id' | 'list_time'>[],
+        observedAt: number,
+    ): Promise<MarketSnapshot> {
         const cityRef = this.city(city);
         const runRef = cityRef.collection('runs').doc();
-        const uniqueIds = [...new Set(adIds)];
+        const listings = new Map(ads.map((ad) => [ad.ad_id, parseListTime(ad.list_time, observedAt)]));
+        const uniqueIds = [...listings.keys()];
+        const listTimes = Object.fromEntries(listings);
         const pageCount = Math.max(1, Math.ceil(uniqueIds.length / PAGE_SIZE));
 
-        // Save the entire fetched ID set before it can affect any listing's lifecycle.
+        // Save IDs and their dates together so retries use the original fetched values.
         for (let offset = 0; offset < pageCount; offset += WRITE_CHUNK_SIZE) {
             const batch = this.firestore.batch();
             for (let page = offset; page < Math.min(offset + WRITE_CHUNK_SIZE, pageCount); page++) {
+                const adIds = uniqueIds.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
                 batch.set(runRef.collection('pages').doc(String(page)), {
-                    adIds: uniqueIds.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+                    adIds,
+                    listTimes: Object.fromEntries(adIds.map((id) => [id, listTimes[id]])),
                 });
             }
             await batch.commit();
@@ -117,10 +129,11 @@ export class MarketStore {
             const baseline = state.trackingStartedAt === null;
             const run: StoredRun = {
                 observedAt, baseline, pageCount, adCount: uniqueIds.length, status: 'pending', summary: null,
+                listTimesStored: true,
             };
             transaction.set(runRef, run);
             transaction.set(cityRef, { pendingRunId: runRef.id }, { merge: true });
-            return { id: runRef.id, observedAt, baseline, adIds: uniqueIds };
+            return { id: runRef.id, observedAt, baseline, adIds: uniqueIds, listTimes };
         });
     }
 
@@ -138,7 +151,16 @@ export class MarketStore {
         if (pages.size !== run.pageCount || adIds.length !== run.adCount || new Set(adIds).size !== run.adCount) {
             throw new Error('Incomplete stored market snapshot');
         }
-        return { id: runRef.id, observedAt: run.observedAt, baseline: run.baseline, adIds };
+        const listTimes: Record<number, number | null> = Object.assign({},
+            ...pages.docs.map((page) => page.data().listTimes ?? {}));
+        if (run.listTimesStored && (Object.keys(listTimes).length !== adIds.length || adIds.some((id) => {
+            if (!Object.hasOwn(listTimes, id)) return true;
+            const time = listTimes[id];
+            return time !== null && (!Number.isFinite(time) || time <= 0 || time > run.observedAt);
+        }))) {
+            throw new Error('Incomplete stored market publication dates');
+        }
+        return { id: runRef.id, observedAt: run.observedAt, baseline: run.baseline, adIds, listTimes };
     }
 
     async applySnapshot(city: City, owner: string, snapshot: MarketSnapshot): Promise<void> {
@@ -165,9 +187,29 @@ export class MarketStore {
         }
 
         const seenIds = new Set(snapshot.adIds);
+        // Legacy baseline records may have been excluded because of a gap, rather than an unknown start.
+        // Recover their eligibility only if the saved runs prove continuous coverage since firstSeenAt.
+        const candidates = [...records.values()].filter((ad) => {
+            const listTime = snapshot.listTimes?.[ad.adId];
+            return ad.firstListTime === undefined && !ad.lifetimeEligible && ad.status !== 'removed' &&
+                ad.episodeStartedAt === ad.firstSeenAt && listTime != null && listTime < ad.firstSeenAt;
+        });
+        let continuousSince = Infinity;
+        if (candidates.length > 0) {
+            const firstSeenAt = Math.min(...candidates.map((ad) => ad.firstSeenAt));
+            const runs = await cityRef.collection('runs')
+                .where('observedAt', '>=', firstSeenAt)
+                .where('observedAt', '<=', snapshot.observedAt)
+                .get();
+            const completedTimes = runs.docs.flatMap((doc) => {
+                const run = doc.data() as StoredRun;
+                return run.status === 'complete' ? [run.observedAt] : [];
+            });
+            continuousSince = continuousObservationStart([...completedTimes, snapshot.observedAt]);
+        }
         const ids = new Set([...records.keys(), ...seenIds]);
         const changes = [...ids].flatMap((id) => {
-            const change = observeAd(records.get(id) ?? null, id, seenIds.has(id), snapshot);
+            const change = observeAd(records.get(id) ?? null, id, seenIds.has(id), snapshot, continuousSince);
             return change === null ? [] : [change];
         });
 
