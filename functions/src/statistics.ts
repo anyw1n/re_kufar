@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import * as logger from 'firebase-functions/logger';
 
-import { PUBLICATION_HISTORY_DAYS, type MarketStatistics, type PeriodStatistics } from './market';
+import { type MarketStatistics, type PeriodStatistics } from './market';
 import { getRoomsDisplayName, Rooms, type Ad, type City, type KufarResponse } from './types';
 
 export interface PriceStatistics {
@@ -177,8 +177,6 @@ export async function fetchAllAds(city: City, fetcher: typeof fetch = fetch): Pr
     }
 }
 
-const adCountPluralRules = new Intl.PluralRules('ru');
-
 /**
  * Calculates statistics from an array of ads and formats them for Telegram (MarkdownV2).
  */
@@ -221,12 +219,10 @@ export function formatStatistics(ads: Ad[], cityDisplayName: string): string {
     const agencyCount = ads.filter((ad) => ad.company_ad).length;
     const ownerCount = ads.length - agencyCount;
 
-    const plural = adCountPluralRules.select(ads.length);
-    const adNoun = plural === 'one' ? 'объявление' : plural === 'few' ? 'объявления' : 'объявлений';
+    const adCounts = escape(`${ads.length} об. (с: ${ownerCount}, а: ${agencyCount})`);
     return (
-        `📊 *${escape(cityDisplayName)}*, ${ads.length} ${adNoun}\n` +
+        `📊 *${escape(cityDisplayName)}*, ${adCounts}\n` +
         `_${escape(new Date().toLocaleString('ru-BY', { timeZone: 'Europe/Minsk' }))}_\n\n` +
-        `🏢 *Тип:* соб\\-ки: ${ownerCount} • аг\\-ва: ${agencyCount}\n\n` +
         `💵 *Цены \\(USD\\):*\n` +
         `${priceLines}\n\n` +
         `🚪 *По комнатам:*\n${roomLines}`
@@ -290,9 +286,7 @@ export function formatPublicationStatistics(days: MarketStatistics['publications
         return times ? `${weekdays[day]} ${groups}  ${times}` : `${weekdays[day]} ${groups}`;
     });
 
-    return heading +
-        `_За ${PUBLICATION_HISTORY_DAYS} дней · минское время · окна по 2 ч_\n` +
-        '```\n   00  06  12  18   Пики с\n' + lines.join('\n') + '\n```';
+    return heading + '```\n   00  06  12  18   Пики с\n' + lines.join('\n') + '\n```';
 }
 
 /** Escape special characters for MarkdownV2 */

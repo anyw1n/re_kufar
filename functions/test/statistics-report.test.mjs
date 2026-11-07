@@ -25,7 +25,7 @@ function fixture() {
 test('shared report includes city prices, percentiles and history for the tracked city', async () => {
     const { source, calls } = fixture();
     const report = await getStatisticsReport(City.Gomel, source);
-    assert.ok(report.startsWith('📊 *Гомель*, 1 объявление\n'));
+    assert.ok(report.startsWith('📊 *Гомель*, 1 об\\. \\(с: 1, а: 0\\)\n'));
     assert.ok(report.includes('P10: 450$'));
     assert.ok(report.includes('*История объявлений:*'));
     assert.ok(report.includes('Ожидается первый успешный обход'));
@@ -48,7 +48,6 @@ test('shared report ends with the full weekday histogram and both near-tied peak
 
     assert.ok(report.endsWith([
         '🕒 *Публикации по дням недели*',
-        '_За 28 дней · минское время · окна по 2 ч_',
         '```',
         '   00  06  12  18   Пики с',
         'Пн ▆▆· ·█· ▆▆· █··  08:00 21% • 18:00 20%',
@@ -66,7 +65,7 @@ test('shared report ends with the full weekday histogram and both near-tied peak
 test('another city gets current prices without reading or collecting its history', async () => {
     const { source, calls } = fixture();
     const report = await getStatisticsReport(City.Minsk, source);
-    assert.ok(report.startsWith('📊 *Минск*, 1 объявление\n'));
+    assert.ok(report.startsWith('📊 *Минск*, 1 об\\. \\(с: 1, а: 0\\)\n'));
     assert.ok(report.includes('История собирается только для города Гомель'));
     assert.deepEqual(calls.ads, [City.Minsk]);
     assert.deepEqual(calls.history, []);

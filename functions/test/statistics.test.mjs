@@ -129,7 +129,7 @@ test('returns no price statistics for empty or fully excluded samples', () => {
     assert.equal(calculatePriceStatistics([makeAd('0'), makeAd('1000000')]), null);
 });
 
-test('formats compact city, listing type, price and room sections with room-specific P50', () => {
+test('formats listing counts in the city header and room-specific P50 in the price breakdown', () => {
     const ads = [
         makeAd('50000', '2', true),
         makeAd('10000'),
@@ -139,11 +139,9 @@ test('formats compact city, listing type, price and room sections with room-spec
     ];
     const [header, timestamp, ...sections] = formatStatistics(ads, 'Минск (тест).').split('\n');
 
-    assert.equal(header, '📊 *Минск \\(тест\\)\\.*, 5 объявлений');
+    assert.equal(header, '📊 *Минск \\(тест\\)\\.*, 5 об\\. \\(с: 4, а: 1\\)');
     assert.match(timestamp, /^_\d{2}\\\.\d{2}\\\.\d{4}, \d{2}:\d{2}:\d{2}_$/);
     assert.deepEqual(sections, [
-        '',
-        '🏢 *Тип:* соб\\-ки: 4 • аг\\-ва: 1',
         '',
         '💵 *Цены \\(USD\\):*',
         '  min: 100$ • max: 500$ • av: 300$',
@@ -164,7 +162,7 @@ test('formats an empty ad sample without invalid numbers', () => {
 test('keeps ad and room counts when no valid prices are available', () => {
     const text = formatStatistics([makeAd('0'), makeAd('1000000')], 'Минск');
 
-    assert.ok(text.includes('📊 *Минск*, 2 объявления'));
+    assert.ok(text.includes('📊 *Минск*, 2 об\\. \\(с: 2, а: 0\\)'));
     assert.ok(text.includes('Нет объявлений с подходящей ценой\\.'));
     assert.ok(text.includes('1\\-комн\\.: 2 кв\\., нет подходящих цен'));
     assert.ok(!text.includes('P50'));
@@ -175,6 +173,6 @@ test('uses only valid prices for room averages and medians while counting all st
     const ads = ['20000', '0', '2000000', 'invalid'].map((price) => makeAd(price, '6'));
     const text = formatStatistics(ads, 'Минск');
 
-    assert.ok(text.includes('📊 *Минск*, 4 объявления'));
+    assert.ok(text.includes('📊 *Минск*, 4 об\\. \\(с: 4, а: 0\\)'));
     assert.ok(text.includes('Студии: 4 кв\\., \\~200$ • P50: 200$'));
 });
