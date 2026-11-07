@@ -2,7 +2,7 @@ import * as logger from 'firebase-functions/logger';
 
 import { getTrackingCity, type MarketStatistics } from './market';
 import { marketStore } from './market-tracker';
-import { fetchAllAds, formatMarketStatistics, formatStatistics } from './statistics';
+import { fetchAllAds, formatMarketStatistics, formatPublicationStatistics, formatStatistics } from './statistics';
 import { getCityDisplayName, type Ad, type City } from './types';
 
 interface StatisticsReportSource {
@@ -29,7 +29,9 @@ export async function getStatisticsReport(city: City, source = defaultSource()):
         history = `🕓 История собирается только для города ${getCityDisplayName(source.trackedCity)}\\.`;
     } else {
         try {
-            history = formatMarketStatistics(await source.loadHistory(city));
+            const stats = await source.loadHistory(city);
+            history = formatMarketStatistics(stats);
+            if (stats !== null) history += `\n\n${formatPublicationStatistics(stats.publications)}`;
         } catch (error) {
             source.onHistoryError?.(error);
             history = '🕓 Не удалось загрузить историю объявлений\\. Попробуйте позже\\.';

@@ -7,6 +7,7 @@ import {
     MIN_SNAPSHOT_INTERVAL_MS,
     observeAd,
     parseListTime,
+    PUBLICATION_HISTORY_DAYS,
     summarizeEvents,
     type CompletedSnapshot,
     type MarketEvent,
@@ -252,16 +253,30 @@ export class MarketStore {
         const state = await this.getState(city);
         if (state.trackingStartedAt === null || state.lastSnapshotAt === null) return null;
 
-        const runs = await this.city(city).collection('runs')
-            .where('observedAt', '>=', now - 7 * DAY_MS)
-            .where('observedAt', '<=', Math.min(now, state.lastSnapshotAt))
-            .get();
+        const cityRef = this.city(city);
+        const cutoff = Math.min(now, state.lastSnapshotAt);
+        const publicationStart = Math.max(state.trackingStartedAt, now - PUBLICATION_HISTORY_DAYS * DAY_MS);
+        const [runs, ads] = await Promise.all([
+            cityRef.collection('runs')
+                .where('observedAt', '>=', now - 7 * DAY_MS)
+                .where('observedAt', '<=', cutoff)
+                .get(),
+            cityRef.collection('ads')
+                .where('firstListTime', '>=', publicationStart)
+                .where('firstListTime', '<=', cutoff)
+                .get(),
+        ]);
         const snapshots = runs.docs.flatMap((doc): CompletedSnapshot[] => {
             const run = doc.data() as StoredRun;
             return run.status === 'complete' && run.summary !== null
                 ? [{ observedAt: run.observedAt, summary: run.summary }]
                 : [];
         });
-        return calculateMarketStatistics(snapshots, state.trackingStartedAt, state.lastSnapshotAt, now);
+        const publicationTimes = ads.docs.flatMap((doc): number[] => {
+            const { firstListTime, firstSeenAt } = doc.data() as TrackedAd;
+            // A pending run can already have written its new ad documents.
+            return typeof firstListTime === 'number' && firstSeenAt <= cutoff ? [firstListTime] : [];
+        });
+        return calculateMarketStatistics(snapshots, state.trackingStartedAt, state.lastSnapshotAt, now, publicationTimes);
     }
 }

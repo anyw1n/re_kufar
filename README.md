@@ -176,6 +176,12 @@ The history section in `📊 Статистика` includes:
   them as new again.
 - The median estimated lifetime in days for eligible episodes whose disappearance
   was confirmed in the last seven days, labeled `Среднее время жизни`.
+- A weekday publication histogram using saved first publication times within
+  the last **28 days** of tracked history. Each bar represents two hours in
+  Minsk time and scales to the busiest bar of that weekday. Peak labels show
+  the starts of non-overlapping two-hour windows and their shares of that
+  weekday's publications. Windows advance by 15 minutes, with distinct peaks
+  shown when they reach at least 90% of the busiest window.
 
 History begins with the first successful run after deployment. That run is a
 **baseline**: existing listings are stored without being counted as new. No past

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { calculateMarketStatistics } from '../lib/market.js';
 import { getStatisticsReport } from '../lib/statistics-report.js';
 import { City } from '../lib/types.js';
 
@@ -30,6 +31,36 @@ test('shared report includes city prices, percentiles and history for the tracke
     assert.ok(report.includes('Ожидается первый успешный обход'));
     assert.deepEqual(calls.ads, [City.Gomel]);
     assert.deepEqual(calls.history, [City.Gomel]);
+});
+
+test('shared report ends with the full weekday histogram and both near-tied peaks', async () => {
+    const { source } = fixture();
+    const started = Date.parse('2026-11-01T00:00:00Z');
+    const now = Date.parse('2026-11-07T17:00:00Z');
+    const monday = [
+        ['00:00', 15], ['03:00', 15], ['08:00', 10], ['09:45', 11],
+        ['12:00', 15], ['15:00', 14], ['18:00', 11], ['19:45', 9],
+    ];
+    const publicationTimes = monday.flatMap(([time, count]) =>
+        Array(count).fill(Date.parse(`2026-11-02T${time}:00+03:00`)));
+    source.loadHistory = async () => calculateMarketStatistics([], started, now, now, publicationTimes);
+    const report = await getStatisticsReport(City.Gomel, source);
+
+    assert.ok(report.endsWith([
+        '🕒 *Публикации по дням недели*',
+        '_За 28 дней · минское время · окна по 2 ч_',
+        '```',
+        '   00  06  12  18   Пики с',
+        'Пн ▆▆· ·█· ▆▆· █··  08:00 21% • 18:00 20%',
+        'Вт н/н',
+        'Ср н/н',
+        'Чт н/н',
+        'Пт н/н',
+        'Сб н/н',
+        'Вс н/н',
+        '```',
+    ].join('\n')));
+    assert.ok(report.length < 4096);
 });
 
 test('another city gets current prices without reading or collecting its history', async () => {

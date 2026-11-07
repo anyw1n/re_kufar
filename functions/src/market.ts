@@ -1,6 +1,7 @@
 import { City } from './types';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
+export const PUBLICATION_HISTORY_DAYS = 28;
 export const MIN_SNAPSHOT_INTERVAL_MS = 30 * 60 * 1000;
 // Allow scheduling/fetch jitter around two hourly disappearance checks.
 export const MAX_OBSERVATION_GAP_MS = 150 * 60 * 1000;
@@ -66,6 +67,16 @@ export interface DailyStatistics extends PeriodStatistics {
     snapshots: number;
 }
 
+interface PublicationPeak {
+    startMinute: number;
+    count: number;
+}
+
+interface WeekdayPublications {
+    intervals: number[];
+    peaks: PublicationPeak[];
+}
+
 export interface MarketStatistics {
     trackingStartedAt: number;
     lastSnapshotAt: number;
@@ -76,6 +87,7 @@ export interface MarketStatistics {
     daily: DailyStatistics[];
     medianLifetimeDays: number | null;
     lifetimeSampleSize: number;
+    publications: WeekdayPublications[];
 }
 
 /** The tracked city is independent of users' notification filters. */
@@ -208,6 +220,69 @@ function minskDate(timestamp: number): string {
     return minskDateFormatter.format(new Date(timestamp));
 }
 
+const minskPublicationFormatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Minsk', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23',
+});
+const publicationWeekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const publicationStepMinutes = 15;
+const publicationWindowMinutes = 120;
+const publicationWindowSteps = publicationWindowMinutes / publicationStepMinutes;
+
+function publicationPeaks(windowCounts: readonly number[]): PublicationPeak[] {
+    const threshold = Math.max(...windowCounts) * 0.9;
+    const candidates: PublicationPeak[] = [];
+    for (let start = 0; start < windowCounts.length;) {
+        const count = windowCounts[start];
+        let end = start;
+        while (windowCounts[end + 1] === count) end++;
+
+        // Treat equal consecutive counts as one peak if the adjacent counts are lower.
+        const hasNeighbor = start > 0 || end < windowCounts.length - 1;
+        if (hasNeighbor && count >= threshold &&
+            count > (windowCounts[start - 1] ?? -1) && count > (windowCounts[end + 1] ?? -1)) {
+            const middle = Math.floor((start + end) / 2);
+            candidates.push({ startMinute: middle * publicationStepMinutes, count });
+        }
+        start = end + 1;
+    }
+
+    // Keep the strongest representative of overlapping peak windows.
+    const peaks: PublicationPeak[] = [];
+    for (const candidate of candidates.sort((a, b) => b.count - a.count || a.startMinute - b.startMinute)) {
+        if (peaks.every((peak) => Math.abs(peak.startMinute - candidate.startMinute) >= publicationWindowMinutes)) {
+            peaks.push(candidate);
+        }
+    }
+    return peaks.sort((a, b) => a.startMinute - b.startMinute);
+}
+
+function summarizePublicationDay(steps: readonly number[]): WeekdayPublications {
+    let count = steps.slice(0, publicationWindowSteps).reduce((sum, value) => sum + value, 0);
+    const windowCounts = [count];
+    for (let next = publicationWindowSteps; next < steps.length; next++) {
+        count += steps[next] - steps[next - publicationWindowSteps];
+        windowCounts.push(count);
+    }
+    return {
+        intervals: windowCounts.filter((_, start) => start % publicationWindowSteps === 0),
+        peaks: publicationPeaks(windowCounts),
+    };
+}
+
+function countPublications(publicationTimes: readonly number[]): WeekdayPublications[] {
+    const days = publicationWeekdays.map(() => Array<number>(24 * 60 / publicationStepMinutes).fill(0));
+    for (const timestamp of publicationTimes) {
+        const parts = minskPublicationFormatter.formatToParts(timestamp);
+        const weekday = publicationWeekdays.indexOf(parts.find((part) => part.type === 'weekday')?.value ?? '');
+        const hour = Number(parts.find((part) => part.type === 'hour')?.value);
+        const minute = Number(parts.find((part) => part.type === 'minute')?.value);
+        if (weekday !== -1 && Number.isFinite(hour) && Number.isFinite(minute)) {
+            days[weekday][Math.floor((hour * 60 + minute) / publicationStepMinutes)]++;
+        }
+    }
+    return days.map(summarizePublicationDay);
+}
+
 function periodStatistics(snapshots: readonly CompletedSnapshot[]): PeriodStatistics {
     const counts = snapshots.reduce((totals, snapshot) => ({
         newAds: totals.newAds + snapshot.summary.newAds,
@@ -236,6 +311,7 @@ export function calculateMarketStatistics(
     trackingStartedAt: number,
     lastSnapshotAt: number,
     now: number,
+    publicationTimes: readonly number[] = [],
 ): MarketStatistics {
     const weekStart = now - 7 * DAY_MS;
     const week = snapshots.filter((snapshot) =>
@@ -262,5 +338,6 @@ export function calculateMarketStatistics(
         daily,
         medianLifetimeDays: medianMs === null ? null : medianMs / DAY_MS,
         lifetimeSampleSize: lifetimes.length,
+        publications: countPublications(publicationTimes),
     };
 }

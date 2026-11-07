@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { DAY_MS } from '../lib/market.js';
+import { DAY_MS, PUBLICATION_HISTORY_DAYS } from '../lib/market.js';
 import { MarketStore } from '../lib/market-store.js';
 import { City } from '../lib/types.js';
 import { FakeFirestore } from './helpers/fake-firestore.mjs';
@@ -72,13 +72,15 @@ test('failure while saving snapshot pages cannot modify lifecycles or publish a 
 test('resumes a failure between write chunks without dropping or duplicating new events', async () => {
     const { firestore, store } = await fixture();
     const ids = Array.from({ length: 300 }, (_, index) => index + 1);
-    const publishedAt = START - DAY_MS;
+    const publishedAt = START;
     const listTimes = Object.fromEntries(ids.map((id) => [id, new Date(publishedAt).toISOString()]));
     const snapshot = await store.prepareSnapshot(City.Minsk, 'worker-1', ads(ids, listTimes), START + HOUR);
     firestore.failCommit = (writes) => writes.some((write) => write.ref.path === `${CITY_PATH}/ads/151`);
 
     await assert.rejects(store.applySnapshot(City.Minsk, 'worker-1', snapshot), /simulated write failure/);
-    assert.equal((await store.getStatistics(City.Minsk, START + HOUR)).week.newAds, 0);
+    const incomplete = await store.getStatistics(City.Minsk, START + HOUR);
+    assert.equal(incomplete.week.newAds, 0);
+    assert.equal(incomplete.publications[1].intervals[6], 0);
     assert.equal((await store.getState(City.Minsk)).lastSnapshotAt, START);
     assert.equal(firestore.documents.get(`${CITY_PATH}/ads/1`).lastRunId, snapshot.id);
     assert.equal(firestore.documents.has(`${CITY_PATH}/ads/151`), false);
@@ -95,11 +97,36 @@ test('resumes a failure between write chunks without dropping or duplicating new
 
     const stats = await store.getStatistics(City.Minsk, START + HOUR);
     assert.equal(stats.week.newAds, 300);
+    assert.equal(stats.publications[1].intervals[6], 300);
     assert.equal(stats.week.disappearedAds, 0);
     assert.equal((await store.getState(City.Minsk)).pendingRunId, null);
     assert.equal(await store.getPendingSnapshot(City.Minsk), null);
     assert.ok(ids.every((id) => firestore.documents.get(`${CITY_PATH}/ads/${id}`).firstListTime === publishedAt));
     assert.ok(firestore.commits.every((writes) => writes.length <= 500));
+});
+
+test('publication history uses the first saved date for disappeared ads until it leaves the window', async () => {
+    const { firestore, store } = await fixture();
+    const publishedAt = START + HOUR;
+    const seenAt = publishedAt + DAY_MS;
+    const first = await store.prepareSnapshot(City.Minsk, 'worker-1',
+        ads([42, 43], { 42: new Date(publishedAt).toISOString() }), seenAt);
+    await store.applySnapshot(City.Minsk, 'worker-1', first);
+    const promoted = await store.prepareSnapshot(City.Minsk, 'worker-1',
+        ads([42], { 42: new Date(seenAt).toISOString() }), seenAt + HOUR);
+    await store.applySnapshot(City.Minsk, 'worker-1', promoted);
+    const missing = await store.prepareSnapshot(City.Minsk, 'worker-1', [], seenAt + 2 * HOUR);
+    await store.applySnapshot(City.Minsk, 'worker-1', missing);
+    const removed = await store.prepareSnapshot(City.Minsk, 'worker-1', [], seenAt + 3 * HOUR);
+    await store.applySnapshot(City.Minsk, 'worker-1', removed);
+    assert.equal(firestore.documents.get(`${CITY_PATH}/ads/42`).status, 'removed');
+
+    const boundary = publishedAt + PUBLICATION_HISTORY_DAYS * DAY_MS;
+    const current = await store.getStatistics(City.Minsk, boundary);
+    assert.equal(current.publications[1].intervals[6], 1); // Tuesday afternoon
+    assert.deepEqual(current.publications.flatMap((day) => day.intervals).filter(Boolean), [1]);
+    const expired = await store.getStatistics(City.Minsk, boundary + 1);
+    assert.ok(expired.publications.every((day) => day.intervals.every((count) => count === 0)));
 });
 
 test('failure just before publication preserves confirmed disappearance events on resume', async () => {

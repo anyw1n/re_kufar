@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import * as logger from 'firebase-functions/logger';
 
-import { type MarketStatistics, type PeriodStatistics } from './market';
+import { PUBLICATION_HISTORY_DAYS, type MarketStatistics, type PeriodStatistics } from './market';
 import { getRoomsDisplayName, Rooms, type Ad, type City, type KufarResponse } from './types';
 
 export interface PriceStatistics {
@@ -264,6 +264,35 @@ export function formatMarketStatistics(stats: MarketStatistics | null): string {
         `  *Вернулись за 7 дней:* ${stats.week.returnedAds}\n` +
         `  *Среднее время жизни:* ${lifetime}${partial}\n\n` +
         dailyLines.join('\n');
+}
+
+export function formatPublicationStatistics(days: MarketStatistics['publications']): string {
+    const heading = '🕒 *Публикации по дням недели*\n';
+    if (days.every((day) => day.intervals.every((count) => count === 0))) {
+        return heading + 'Пока нет данных о времени публикации\\.';
+    }
+
+    const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+    const heights = '·▁▂▃▄▅▆▇█';
+    const lines = days.map(({ intervals, peaks }, day) => {
+        const total = intervals.reduce((sum, count) => sum + count, 0);
+        if (total === 0) return `${weekdays[day]} н/н`;
+
+        const maximum = Math.max(...intervals);
+        const bars = intervals.map((count) => heights[Math.ceil(count * (heights.length - 1) / maximum)]).join('');
+        const groups = bars.match(/.{3}/g)?.join(' ') ?? bars;
+        const times = peaks.map(({ startMinute, count }) => {
+            const hour = String(Math.floor(startMinute / 60)).padStart(2, '0');
+            const minute = String(startMinute % 60).padStart(2, '0');
+            const share = Math.round(count * 1000 / total) / 10;
+            return `${hour}:${minute} ${share}%`;
+        }).join(' • ');
+        return times ? `${weekdays[day]} ${groups}  ${times}` : `${weekdays[day]} ${groups}`;
+    });
+
+    return heading +
+        `_За ${PUBLICATION_HISTORY_DAYS} дней · минское время · окна по 2 ч_\n` +
+        '```\n   00  06  12  18   Пики с\n' + lines.join('\n') + '\n```';
 }
 
 /** Escape special characters for MarkdownV2 */
