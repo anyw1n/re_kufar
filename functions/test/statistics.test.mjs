@@ -85,8 +85,8 @@ test('interpolates two prices and rounds only the formatted report', () => {
     });
 
     const text = formatStatistics(ads, 'Минск');
-    assert.ok(text.includes('P10: 111$ · P25: 126$'));
-    assert.ok(text.includes('P75: 176$ · P90: 191$'));
+    assert.ok(text.includes('P25: 126$ • P50: 151$ • P75: 176$'));
+    assert.ok(text.includes('P10: 111$ • P90: 191$'));
 });
 
 test('handles repeated prices', () => {
@@ -129,7 +129,7 @@ test('returns no price statistics for empty or fully excluded samples', () => {
     assert.equal(calculatePriceStatistics([makeAd('0'), makeAd('1000000')]), null);
 });
 
-test('formats the percentiles and sample size while keeping the existing report sections', () => {
+test('formats compact city, listing type, price and room sections with room-specific P50', () => {
     const ads = [
         makeAd('50000', '2', true),
         makeAd('10000'),
@@ -137,19 +137,24 @@ test('formats the percentiles and sample size while keeping the existing report 
         makeAd('20000'),
         makeAd('0', null),
     ];
-    const text = formatStatistics(ads, 'Минск (тест).');
+    const [header, timestamp, ...sections] = formatStatistics(ads, 'Минск (тест).').split('\n');
 
-    assert.ok(text.includes('*Статистика: Минск \\(тест\\)\\.*'));
-    assert.ok(text.includes('*Всего объявлений:* 5'));
-    assert.ok(text.includes('Объявлений в расчёте: 4'));
-    assert.ok(text.includes('Мин: 100$ · Макс: 500$'));
-    assert.ok(text.includes('Средняя: 300$ · Медиана: 300$'));
-    assert.ok(text.includes('*Перцентили цен:*'));
-    assert.ok(text.includes('P10: 130$ · P25: 175$'));
-    assert.ok(text.includes('P75: 425$ · P90: 470$'));
-    assert.ok(text.includes('*По комнатам:*'));
-    assert.ok(text.includes('Собственники: 4'));
-    assert.ok(text.includes('Агентства: 1'));
+    assert.equal(header, '📊 *Минск \\(тест\\)\\.*, 5 объявлений');
+    assert.match(timestamp, /^_\d{2}\\\.\d{2}\\\.\d{4}, \d{2}:\d{2}:\d{2}_$/);
+    assert.deepEqual(sections, [
+        '',
+        '🏢 *Тип:* соб\\-ки: 4 • аг\\-ва: 1',
+        '',
+        '💵 *Цены \\(USD\\):*',
+        '  min: 100$ • max: 500$ • av: 300$',
+        '  P25: 175$ • P50: 300$ • P75: 425$',
+        '  P10: 130$ • P90: 470$',
+        '',
+        '🚪 *По комнатам:*',
+        '  1\\-комн\\.: 3 кв\\., \\~233$ • P50: 200$',
+        '  2\\-комн\\.: 1 кв\\., \\~500$ • P50: 500$',
+        '  Не указано: 1 кв\\., нет подходящих цен',
+    ]);
 });
 
 test('formats an empty ad sample without invalid numbers', () => {
@@ -159,18 +164,17 @@ test('formats an empty ad sample without invalid numbers', () => {
 test('keeps ad and room counts when no valid prices are available', () => {
     const text = formatStatistics([makeAd('0'), makeAd('1000000')], 'Минск');
 
-    assert.ok(text.includes('*Всего объявлений:* 2'));
+    assert.ok(text.includes('📊 *Минск*, 2 объявления'));
     assert.ok(text.includes('Нет объявлений с подходящей ценой\\.'));
     assert.ok(text.includes('1\\-комн\\.: 2 кв\\., нет подходящих цен'));
-    assert.ok(!text.includes('Перцентили цен'));
+    assert.ok(!text.includes('P50'));
     assert.doesNotMatch(text, /NaN|undefined|Infinity/);
 });
 
-test('uses only valid prices for room averages and still counts all ads', () => {
-    const ads = [makeAd('20000'), makeAd('0'), makeAd('2000000'), makeAd('invalid')];
+test('uses only valid prices for room averages and medians while counting all studios', () => {
+    const ads = ['20000', '0', '2000000', 'invalid'].map((price) => makeAd(price, '6'));
     const text = formatStatistics(ads, 'Минск');
 
-    assert.ok(text.includes('*Всего объявлений:* 4'));
-    assert.ok(text.includes('Объявлений в расчёте: 1'));
-    assert.ok(text.includes('1\\-комн\\.: 4 кв\\., \\~200$'));
+    assert.ok(text.includes('📊 *Минск*, 4 объявления'));
+    assert.ok(text.includes('Студии: 4 кв\\., \\~200$ • P50: 200$'));
 });

@@ -138,17 +138,17 @@ Built with Firebase Functions, Firestore, and Grammy.
 
 The bot's `📊 Статистика` menu fetches all rental ads for the selected city, including
 owner and agency listings, without applying the user's price or room filters.
-The report includes ad counts, minimum/maximum/average/median prices, price
-percentiles **P10, P25, P75, P90**, room distribution, and owner/agency counts.
+The report includes ad counts, minimum/maximum/average prices, price percentiles
+**P10, P25, P50, P75, P90**, room distribution, and owner/agency counts.
 
-Price calculations include only valid, positive USD prices below 10,000 USD. The
-report shows the number of ads included in the price sample; ad and room counts
-still include all listings. Room averages use only valid prices in each room group.
-If no valid prices remain, the report indicates that price data is unavailable.
+Price calculations include only valid, positive USD prices below 10,000 USD.
+Room averages and medians use valid prices within each room group. Ad and room
+counts include all listings. If no valid prices remain, the report indicates
+that price data is unavailable.
 
 Percentiles use linear interpolation at index `(n - 1) * p` in the sorted price
-sample, where `p` is 0.10, 0.25, 0.75, or 0.90. For example, prices of 100, 200,
-400, and 500 USD yield P10 = 130, P25 = 175, P75 = 425, and P90 = 470 USD.
+sample, where `p` is 0.10, 0.25, 0.50, 0.75, or 0.90. For example, prices of 100,
+200, 400, and 500 USD yield P10 = 130, P25 = 175, P50 = 300, P75 = 425, and P90 = 470 USD.
 Calculations retain cents; displayed prices are rounded to whole dollars.
 
 Manual requests run in a durable Firestore queue so their network operations do
@@ -168,13 +168,14 @@ The history section in `📊 Статистика` includes:
 
 - New IDs and confirmed disappearances over the last **24 hours** and **7 days**.
 - Daily new/disappeared counts for the last seven calendar dates in **Europe/Minsk**,
-  including the current partial day. Days without successful observations say so.
-- The ratio `new / disappeared` for each rolling period. With no disappearances,
-  the ratio is undefined and the report states this instead of displaying infinity.
+  including the current partial day, shown two dates per line. `н/н` marks days
+  without successful observations.
+- The ratio `new / disappeared` for each rolling period. A dash indicates an
+  undefined ratio when there are no disappearances.
 - Returned IDs as a separate count, preserving their identity instead of counting
   them as new again.
 - The median estimated lifetime in days for eligible episodes whose disappearance
-  was confirmed in the last seven days, together with the sample size.
+  was confirmed in the last seven days, labeled `Среднее время жизни`.
 
 History begins with the first successful run after deployment. That run is a
 **baseline**: existing listings are stored without being counted as new. No past

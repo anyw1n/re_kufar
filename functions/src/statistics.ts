@@ -177,6 +177,8 @@ export async function fetchAllAds(city: City, fetcher: typeof fetch = fetch): Pr
     }
 }
 
+const adCountPluralRules = new Intl.PluralRules('ru');
+
 /**
  * Calculates statistics from an array of ads and formats them for Telegram (MarkdownV2).
  */
@@ -187,38 +189,31 @@ export function formatStatistics(ads: Ad[], cityDisplayName: string): string {
 
     const priceStats = calculatePriceStatistics(ads);
     const priceLines = priceStats
-        ? `  Объявлений в расчёте: ${priceStats.count}\n` +
-        `  Мин: ${Math.round(priceStats.min)}$ · Макс: ${Math.round(priceStats.max)}$\n` +
-        `  Средняя: ${Math.round(priceStats.average)}$ · Медиана: ${Math.round(priceStats.median)}$\n\n` +
-        `📈 *Перцентили цен:*\n` +
-        `  P10: ${Math.round(priceStats.p10)}$ · P25: ${Math.round(priceStats.p25)}$\n` +
-        `  P75: ${Math.round(priceStats.p75)}$ · P90: ${Math.round(priceStats.p90)}$`
+        ? `  min: ${Math.round(priceStats.min)}$ • max: ${Math.round(priceStats.max)}$ • av: ${Math.round(priceStats.average)}$\n` +
+        `  P25: ${Math.round(priceStats.p25)}$ • P50: ${Math.round(priceStats.median)}$ • P75: ${Math.round(priceStats.p75)}$\n` +
+        `  P10: ${Math.round(priceStats.p10)}$ • P90: ${Math.round(priceStats.p90)}$`
         : '  Нет объявлений с подходящей ценой\\.';
 
     // --- Room distribution ---
-    const roomCounts = new Map<string, { count: number; totalPrice: number; pricedCount: number }>();
+    const roomGroups = new Map<string, Ad[]>();
     for (const ad of ads) {
         const roomParam = ad.ad_parameters.find((p) => p.p === 'rooms');
         const roomValue = roomParam ? String(roomParam.v) : '?';
-        const price = getValidPrice(ad);
-        const entry = roomCounts.get(roomValue) ?? { count: 0, totalPrice: 0, pricedCount: 0 };
-        entry.count++;
-        if (price !== null) {
-            entry.totalPrice += price;
-            entry.pricedCount++;
-        }
-        roomCounts.set(roomValue, entry);
+        const group = roomGroups.get(roomValue) ?? [];
+        group.push(ad);
+        roomGroups.set(roomValue, group);
     }
 
-    const roomLines = [...roomCounts.entries()]
+    const roomLines = [...roomGroups.entries()]
         .sort(([a], [b]) => (a === '?' ? 1 : b === '?' ? -1 : Number(a) - Number(b)))
-        .map(([room, { count, totalPrice, pricedCount }]) => {
-            const priceText = pricedCount > 0
-                ? `\\~${Math.round(totalPrice / pricedCount)}$`
+        .map(([room, group]) => {
+            const prices = calculatePriceStatistics(group);
+            const priceText = prices
+                ? `\\~${Math.round(prices.average)}$ • P50: ${Math.round(prices.median)}$`
                 : 'нет подходящих цен';
             const label = room === Rooms.Studio ? getRoomsDisplayName(Rooms.Studio)
-                : room === '?' ? 'Не указано' : `${room}\\-комн\\.`;
-            return `  ${label}: ${count} кв\\., ${priceText}`;
+                : room === '?' ? 'Не указано' : `${room}-комн.`;
+            return `  ${escape(label)}: ${group.length} кв\\., ${priceText}`;
         })
         .join('\n');
 
@@ -226,55 +221,49 @@ export function formatStatistics(ads: Ad[], cityDisplayName: string): string {
     const agencyCount = ads.filter((ad) => ad.company_ad).length;
     const ownerCount = ads.length - agencyCount;
 
-    // --- Format ---
+    const plural = adCountPluralRules.select(ads.length);
+    const adNoun = plural === 'one' ? 'объявление' : plural === 'few' ? 'объявления' : 'объявлений';
     return (
-        `📊 *Статистика: ${escape(cityDisplayName)}*\n` +
+        `📊 *${escape(cityDisplayName)}*, ${ads.length} ${adNoun}\n` +
         `_${escape(new Date().toLocaleString('ru-BY', { timeZone: 'Europe/Minsk' }))}_\n\n` +
-        `🏠 *Всего объявлений:* ${ads.length}\n\n` +
+        `🏢 *Тип:* соб\\-ки: ${ownerCount} • аг\\-ва: ${agencyCount}\n\n` +
         `💵 *Цены \\(USD\\):*\n` +
         `${priceLines}\n\n` +
-        `🚪 *По комнатам:*\n${roomLines}\n\n` +
-        `🏢 *Тип:*\n` +
-        `  Собственники: ${ownerCount}\n` +
-        `  Агентства: ${agencyCount}`
+        `🚪 *По комнатам:*\n${roomLines}`
     );
 }
 
 function formatMarketPeriod(label: string, period: PeriodStatistics): string {
-    const ratio = period.ratio === null
-        ? 'не определено \\(исчезнувших нет\\)'
-        : escape(period.ratio.toFixed(2).replace('.', ','));
-    return `  *${label}:* новых ${period.newAds}, исчезнувших ${period.disappearedAds}\n` +
-        `  Новые / исчезнувшие: ${ratio}`;
+    const counts = escape(`+${period.newAds} / -${period.disappearedAds}`);
+    const ratio = period.ratio === null ? '—' : escape(`~${period.ratio.toFixed(2)}`);
+    return `  *${label}:* ${counts}, ${ratio}`;
 }
 
 export function formatMarketStatistics(stats: MarketStatistics | null): string {
     const heading = '🕓 *История объявлений:*\n';
     if (stats === null) return heading + 'Ожидается первый успешный обход\\.';
 
-    const started = new Date(stats.trackingStartedAt).toLocaleString('ru-BY', { timeZone: 'Europe/Minsk' });
-    const updated = new Date(stats.lastSnapshotAt).toLocaleString('ru-BY', { timeZone: 'Europe/Minsk' });
-    const dailyLines = stats.daily.map((day) => {
+    const dailyEntries = stats.daily.map((day) => {
         const date = day.date.split('-').slice(1).reverse().join('.');
-        const counts = day.snapshots === 0 ? 'нет наблюдений' : `+${day.newAds} / −${day.disappearedAds}`;
-        return `  ${escape(`${date}: ${counts}`)}`;
-    }).join('\n');
-    const lifetime = stats.medianLifetimeDays === null
-        ? 'пока нет завершённых наблюдений с известным началом'
-        : escape(`~${stats.medianLifetimeDays < 0.1 ? '<0,1' : stats.medianLifetimeDays.toFixed(1).replace('.', ',')} дн.`) +
-        ` \\(наблюдений: ${stats.lifetimeSampleSize}\\)`;
+        const counts = day.snapshots === 0 ? 'н/н' : `+${day.newAds} / −${day.disappearedAds}`;
+        return escape(`${date}: ${counts}`);
+    });
+    const dailyLines: string[] = [];
+    for (let index = 0; index < dailyEntries.length; index += 2) {
+        dailyLines.push(`  ${dailyEntries.slice(index, index + 2).join(' • ')}`);
+    }
+    const median = stats.medianLifetimeDays;
+    const lifetime = median === null ? '—' : escape(`${median < 0.1 ? '<0.1' : median.toFixed(1)} дн.`);
     const partial = stats.partialWeek
-        ? `\n_${stats.partialDay ? 'История за 24 часа и 7 дней пока неполная' : 'История за 7 дней пока неполная'}\\._`
+        ? `\n  _${stats.partialDay ? 'История за 24 часа и 7 дней пока неполная' : 'История за 7 дней пока неполная'}\\._`
         : '';
 
     return heading +
-        `  Наблюдаем с: ${escape(started)}\n` +
-        `  Последний обход: ${escape(updated)}\n\n` +
-        `${formatMarketPeriod('За 24 часа', stats.day)}\n\n` +
-        `${formatMarketPeriod('За 7 дней', stats.week)}\n` +
-        `  Вернулись за 7 дней: ${stats.week.returnedAds}\n\n` +
-        `📅 *По дням: новые / исчезнувшие*\n${dailyLines}\n\n` +
-        `⏳ *Медианное время до исчезновения за 7 дней:*\n  ${lifetime}` + partial;
+        `${formatMarketPeriod('24ч', stats.day)}\n` +
+        `${formatMarketPeriod('7д', stats.week)}\n` +
+        `  *Вернулись за 7 дней:* ${stats.week.returnedAds}\n` +
+        `  *Среднее время жизни:* ${lifetime}${partial}\n\n` +
+        dailyLines.join('\n');
 }
 
 /** Escape special characters for MarkdownV2 */

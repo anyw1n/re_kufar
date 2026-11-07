@@ -293,10 +293,10 @@ test('missing removals and lifetime samples do not produce Infinity or a mislead
     assert.equal(stats.partialDay, true);
     assert.equal(stats.partialWeek, true);
     const text = formatMarketStatistics(stats);
-    assert.ok(text.includes('исчезнувших нет'));
-    assert.ok(text.includes('пока нет завершённых наблюдений'));
+    assert.ok(text.includes('  *24ч:* \\+5 / \\-0, —'));
+    assert.ok(text.includes('  *Среднее время жизни:* —'));
     assert.ok(text.includes('История за 24 часа и 7 дней пока неполная'));
-    assert.ok(text.includes('нет наблюдений'));
+    assert.ok(text.includes('н/н'));
     assert.doesNotMatch(text, /NaN|Infinity|undefined/);
 });
 
@@ -313,25 +313,30 @@ test('history gaps and stale observations mark the reporting periods as incomple
     assert.equal(stats.partialWeek, true);
 });
 
-test('formats history, daily counts and observed lifetime with MarkdownV2 escaping', () => {
-    const now = Date.parse('2026-11-02T09:00:00Z');
-    const observations = Array.from({ length: 169 }, (_, index) => index === 0
-        ? completed(now, 10, 4, 2, [2 * DAY_MS, 3 * DAY_MS])
+test('formats compact history with dates in pairs and the median lifetime', () => {
+    const now = Date.parse('2026-11-07T17:00:00Z');
+    const observations = Array.from({ length: 125 }, (_, index) => index === 0
+        ? completed(now, 10, 4, 2, [DAY_MS, 4.1 * DAY_MS, 10 * DAY_MS])
         : completed(now - index * HOUR));
     const stats = calculateMarketStatistics(observations, START, now, now);
     const text = formatMarketStatistics(stats);
 
-    assert.ok(text.includes('новых 10, исчезнувших 4'));
-    assert.ok(text.includes('Новые / исчезнувшие: 2,50'));
-    assert.ok(text.includes('Вернулись за 7 дней: 2'));
-    assert.ok(text.includes('02\\.11: \\+10 / −4'));
-    assert.ok(text.includes('\\~2,5 дн\\. \\(наблюдений: 2\\)'));
-    assert.ok(!text.includes('История за 7 дней пока неполная'));
+    assert.equal(text, [
+        '🕓 *История объявлений:*',
+        '  *24ч:* \\+10 / \\-4, \\~2\\.50',
+        '  *7д:* \\+10 / \\-4, \\~2\\.50',
+        '  *Вернулись за 7 дней:* 2',
+        '  *Среднее время жизни:* 4\\.1 дн\\.',
+        '  _История за 7 дней пока неполная\\._',
+        '',
+        '  01\\.11: н/н • 02\\.11: \\+0 / −0',
+        '  03\\.11: \\+0 / −0 • 04\\.11: \\+0 / −0',
+        '  05\\.11: \\+0 / −0 • 06\\.11: \\+0 / −0',
+        '  07\\.11: \\+10 / −4',
+    ].join('\n'));
     assert.ok((formatStatistics([], 'Минск') + text).length < 4096);
 });
 
 test('formats the initial state without invented historical counts', () => {
-    const text = formatMarketStatistics(null);
-    assert.ok(text.includes('Ожидается первый успешный обход\\.'));
-    assert.ok(!text.includes('новых 0'));
+    assert.equal(formatMarketStatistics(null), '🕓 *История объявлений:*\nОжидается первый успешный обход\\.');
 });
