@@ -80,7 +80,7 @@ test('resumes a failure between write chunks without dropping or duplicating new
     await assert.rejects(store.applySnapshot(City.Minsk, 'worker-1', snapshot), /simulated write failure/);
     const incomplete = await store.getStatistics(City.Minsk, START + HOUR);
     assert.equal(incomplete.week.newAds, 0);
-    assert.equal(incomplete.publications[1].intervals[6], 0);
+    assert.equal(incomplete.publications[1][12], 0);
     assert.equal((await store.getState(City.Minsk)).lastSnapshotAt, START);
     assert.equal(firestore.documents.get(`${CITY_PATH}/ads/1`).lastRunId, snapshot.id);
     assert.equal(firestore.documents.has(`${CITY_PATH}/ads/151`), false);
@@ -97,7 +97,7 @@ test('resumes a failure between write chunks without dropping or duplicating new
 
     const stats = await store.getStatistics(City.Minsk, START + HOUR);
     assert.equal(stats.week.newAds, 300);
-    assert.equal(stats.publications[1].intervals[6], 300);
+    assert.equal(stats.publications[1][12], 300);
     assert.equal(stats.week.disappearedAds, 0);
     assert.equal((await store.getState(City.Minsk)).pendingRunId, null);
     assert.equal(await store.getPendingSnapshot(City.Minsk), null);
@@ -123,10 +123,10 @@ test('publication history uses the first saved date for disappeared ads until it
 
     const boundary = publishedAt + PUBLICATION_HISTORY_DAYS * DAY_MS;
     const current = await store.getStatistics(City.Minsk, boundary);
-    assert.equal(current.publications[1].intervals[6], 1); // Tuesday afternoon
-    assert.deepEqual(current.publications.flatMap((day) => day.intervals).filter(Boolean), [1]);
+    assert.equal(current.publications[1][13], 1); // Tuesday 13:00 in Minsk
+    assert.deepEqual(current.publications.flat().filter(Boolean), [1]);
     const expired = await store.getStatistics(City.Minsk, boundary + 1);
-    assert.ok(expired.publications.every((day) => day.intervals.every((count) => count === 0)));
+    assert.ok(expired.publications.every((day) => day.every((count) => count === 0)));
 });
 
 test('failure just before publication preserves confirmed disappearance events on resume', async () => {

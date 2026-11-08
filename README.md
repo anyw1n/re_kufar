@@ -153,8 +153,9 @@ Calculations retain cents; displayed prices are rounded to whole dollars.
 
 Manual requests run in a durable Firestore queue so their network operations do
 not depend on CPU availability after the Telegram webhook has returned. Requests
-are deduplicated by Telegram update ID. The rendered report is saved before
-editing the original loading message, allowing delivery retries without refetching.
+are deduplicated by Telegram update ID. The rendered text and PNG are saved before
+editing the original loading message, allowing retries with the same payload.
+The queued PNG is cleared when delivery reaches a terminal state.
 
 ### Market history
 
@@ -176,12 +177,11 @@ The history section in `📊 Статистика` includes:
   them as new again.
 - The median estimated lifetime in days for eligible episodes whose disappearance
   was confirmed in the last seven days, labeled `Среднее время жизни`.
-- A weekday publication histogram using saved first publication times within
-  the last **28 days** of tracked history. Each bar represents two hours in
-  Minsk time and scales to the busiest bar of that weekday. Peak labels show
-  the starts of non-overlapping two-hour windows and their shares of that
-  weekday's publications. Windows advance by 15 minutes, with distinct peaks
-  shown when they reach at least 90% of the busiest window.
+- A line chart with 24 hourly counts per weekday using saved first publication
+  times within the last **28 days** of tracked history in Minsk time. QuickChart
+  renders the aggregated counts as a dark PNG below the report text in Telegram.
+  The text report is still delivered if the chart is unavailable or the text
+  exceeds Telegram's photo caption limit.
 
 History begins with the first successful run after deployment. That run is a
 **baseline**: existing listings are stored without being counted as new. No past
@@ -284,7 +284,7 @@ Defined in `.env.local` / `.env.prod`:
 - `statisticsDeliveries/{YYYY-MM-DD}/recipients/{chatId}` – delivery status, worker
   lease, Telegram message ID, and acknowledgment timestamp for each evening report
 - `statisticsRequests/{updateId}` – queued manual report, original chat/message,
-  processing lease, rendered report, and terminal delivery status
+  processing lease, rendered text, pending chart PNG, and terminal delivery status
 
 ## Firestore access
 

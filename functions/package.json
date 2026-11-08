@@ -21,7 +21,8 @@
     "dotenv": "^17.3.1",
     "firebase-admin": "^13.7.0",
     "firebase-functions": "^7.2.2",
-    "grammy": "^1.41.1"
+    "grammy": "^1.41.1",
+    "quickchart-js": "4.0.0"
   },
   "devDependencies": {
     "@eslint/compat": "^1.4.1",

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { type Firestore } from 'firebase-admin/firestore';
 
+import { type StatisticsReport } from './statistics-report';
 import { type City } from './types';
 
 interface StatisticsRequestPayload {
@@ -16,6 +17,7 @@ interface StatisticsRequest extends StatisticsRequestPayload {
     createdAt: number;
     completedAt: number | null;
     reportText: string | null;
+    reportPhoto?: Uint8Array | null;
     reportFailed: boolean;
 }
 
@@ -61,13 +63,15 @@ export class StatisticsRequestStore {
         });
     }
 
-    async saveReport(id: string, owner: string, reportText: string, reportFailed: boolean): Promise<void> {
-        await this.updateOwned(id, owner, { reportText, reportFailed });
+    async saveReport(id: string, owner: string, report: StatisticsReport, reportFailed: boolean): Promise<void> {
+        await this.updateOwned(id, owner, {
+            reportText: report.text, reportPhoto: report.photo ?? null, reportFailed,
+        });
     }
 
     async complete(id: string, owner: string, failed: boolean): Promise<void> {
         await this.updateOwned(id, owner, {
-            status: failed ? 'failed' : 'sent', completedAt: Date.now(), leaseExpiresAt: 0,
+            status: failed ? 'failed' : 'sent', completedAt: Date.now(), leaseExpiresAt: 0, reportPhoto: null,
         });
     }
 
@@ -108,8 +112,8 @@ export async function enqueueStatisticsRequest(
 
 interface ProcessDependencies {
     store: StatisticsRequestStore;
-    loadReport: (city: City) => Promise<string>;
-    editMessage: (chatId: number, messageId: number, text: string) => Promise<void>;
+    loadReport: (city: City) => Promise<StatisticsReport>;
+    editMessage: (chatId: number, messageId: number, report: StatisticsReport) => Promise<void>;
     onError: (error: unknown) => void;
     isPermanentDeliveryError: (error: unknown) => boolean;
 }
@@ -120,21 +124,23 @@ export async function processStatisticsRequest(id: string, dependencies: Process
     const request = await dependencies.store.claim(id, owner);
     if (!request) return 'skipped';
 
-    let text = request.reportText;
+    let report: StatisticsReport | null = request.reportText === null
+        ? null
+        : { text: request.reportText, photo: request.reportPhoto ?? undefined };
     let failed = request.reportFailed;
-    if (text === null) {
+    if (report === null) {
         try {
-            text = await dependencies.loadReport(request.city);
+            report = await dependencies.loadReport(request.city);
         } catch (error) {
             dependencies.onError(error);
-            text = '❌ Не удалось получить статистику\\. Попробуйте позже\\.';
+            report = { text: '❌ Не удалось получить статистику\\. Попробуйте позже\\.' };
             failed = true;
         }
-        await dependencies.store.saveReport(id, owner, text, failed);
+        await dependencies.store.saveReport(id, owner, report, failed);
     }
 
     try {
-        await dependencies.editMessage(request.chatId, request.messageId, text);
+        await dependencies.editMessage(request.chatId, request.messageId, report);
     } catch (error) {
         dependencies.onError(error);
         if (!dependencies.isPermanentDeliveryError(error)) {

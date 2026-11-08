@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { type StatisticsReport } from './statistics-report';
 import { type City, type User } from './types';
 
 export type DeliveryClaim = 'claimed' | 'skipped' | 'busy';
@@ -13,8 +14,8 @@ export interface DailyStatisticsRepository {
 
 interface DailyStatisticsDependencies {
     repository: DailyStatisticsRepository;
-    loadReport: (city: City) => Promise<string>;
-    sendReport: (chatId: number, text: string) => Promise<number>;
+    loadReport: (city: City) => Promise<StatisticsReport>;
+    sendReport: (chatId: number, report: StatisticsReport) => Promise<number>;
     onError: (chatId: number, error: unknown) => void;
 }
 
@@ -37,7 +38,7 @@ export async function deliverDailyStatistics(scheduleTime: string, dependencies:
     const date = getDailyStatisticsDate(scheduleTime);
     const owner = randomUUID();
     const recipients = await dependencies.repository.getRecipients();
-    const reports = new Map<City, Promise<string>>();
+    const reports = new Map<City, Promise<StatisticsReport>>();
     const totals = { sent: 0, skipped: 0, failed: 0 };
 
     for (const user of recipients) {
@@ -54,7 +55,7 @@ export async function deliverDailyStatistics(scheduleTime: string, dependencies:
                 report = dependencies.loadReport(city);
                 reports.set(city, report);
             }
-            const text = await report;
+            const content = await report;
             const claim = await dependencies.repository.claim(user.chatId, date, owner, city);
             if (claim === 'skipped') {
                 totals.skipped++;
@@ -63,7 +64,9 @@ export async function deliverDailyStatistics(scheduleTime: string, dependencies:
             if (claim === 'busy') throw new Error('Daily report is reserved by another worker');
             claimed = true;
 
-            const messageId = await dependencies.sendReport(user.chatId, `🌆 *Вечерняя сводка*\n\n${text}`);
+            const messageId = await dependencies.sendReport(user.chatId, {
+                ...content, text: `🌆 *Вечерняя сводка*\n\n${content.text}`,
+            });
             accepted = true;
             await dependencies.repository.markSent(user.chatId, date, owner, messageId);
             totals.sent++;

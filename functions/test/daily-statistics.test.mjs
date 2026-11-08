@@ -25,21 +25,22 @@ function fixture(users = []) {
     for (const item of users) firestore.documents.set(`users/${item.chatId}`, item);
     const repository = new DailyStatisticsStore(firestore);
     const sent = [];
+    const photo = Uint8Array.of(1, 2, 3);
     const loadedCities = [];
     const errors = [];
     const dependencies = {
         repository,
         loadReport: async (city) => {
             loadedCities.push(city);
-            return `Statistics for ${city}`;
+            return { text: `Statistics for ${city}`, photo: city === City.Gomel ? photo : undefined };
         },
-        sendReport: async (chatId, text) => {
-            sent.push({ chatId, text });
+        sendReport: async (chatId, report) => {
+            sent.push({ chatId, ...report });
             return sent.length;
         },
         onError: (chatId, error) => errors.push({ chatId, error }),
     };
-    return { firestore, repository, sent, loadedCities, errors, dependencies };
+    return { firestore, repository, sent, loadedCities, errors, dependencies, photo };
 }
 
 test('daily statistics defaults to 20:00 and supports a configurable local time', (context) => {
@@ -97,13 +98,14 @@ test('each requested city is loaded once per run and shared between its subscrib
     await deliverDailyStatistics(SCHEDULE_TIME, f.dependencies);
     assert.deepEqual(f.loadedCities, [City.Gomel, City.Minsk]);
     assert.equal(f.sent.length, 4);
+    assert.deepEqual(f.sent.map((item) => item.photo), [f.photo, f.photo, undefined, f.photo]);
 });
 
 test('turning notifications off while a report is loading prevents delivery', async () => {
     const f = fixture([user(1)]);
     f.dependencies.loadReport = async () => {
         f.firestore.documents.get('users/1').notificationsEnabled = false;
-        return 'report';
+        return { text: 'report' };
     };
     const result = await deliverDailyStatistics(SCHEDULE_TIME, f.dependencies);
     assert.equal(result.skipped, 1);
@@ -117,7 +119,7 @@ test('a changed city or deleted user cannot receive a stale report', async () =>
         f.dependencies.loadReport = async () => {
             if (change === 'city') f.firestore.documents.get('users/1').filters.city = City.Minsk;
             else f.firestore.documents.delete('users/1');
-            return 'old report';
+            return { text: 'old report' };
         };
         const result = await deliverDailyStatistics(SCHEDULE_TIME, f.dependencies);
         assert.equal(result.skipped, 1);
@@ -140,9 +142,9 @@ test('repeated delivery of the same schedule does not send another report that d
 test('one Telegram failure does not stop other subscribers and the retry skips successful deliveries', async () => {
     const f = fixture([user(1), user(2)]);
     const sendNormally = f.dependencies.sendReport;
-    f.dependencies.sendReport = async (chatId, text) => {
+    f.dependencies.sendReport = async (chatId, report) => {
         if (chatId === 1) throw new Error('temporary Telegram failure');
-        return sendNormally(chatId, text);
+        return sendNormally(chatId, report);
     };
     await assert.rejects(deliverDailyStatistics(SCHEDULE_TIME, f.dependencies), /failed for 1 users/);
     assert.deepEqual(f.sent.map((item) => item.chatId), [2]);
@@ -161,7 +163,7 @@ test('a failed city fetch is shared within the run and does not prevent another 
     f.dependencies.loadReport = async (city) => {
         f.loadedCities.push(city);
         if (city === City.Gomel) throw new Error('Kufar unavailable');
-        return 'Minsk report';
+        return { text: 'Minsk report' };
     };
     await assert.rejects(deliverDailyStatistics(SCHEDULE_TIME, f.dependencies), /failed for 2 users/);
     assert.deepEqual(f.loadedCities, [City.Gomel, City.Minsk]);

@@ -270,7 +270,7 @@ test('daily buckets follow Minsk midnight instead of UTC midnight', () => {
     assert.equal(stats.daily[0].snapshots, 0);
 });
 
-test('publication times follow Minsk midnight and moving windows span adjacent chart bars', () => {
+test('publication counts use Minsk weekdays and hourly buckets', () => {
     const now = Date.parse('2026-11-02T17:00:00Z');
     const publicationTimes = [
         '2026-11-01T20:59:00Z', // Sunday 23:59 in Minsk
@@ -280,12 +280,10 @@ test('publication times follow Minsk midnight and moving windows span adjacent c
     ].map(Date.parse);
     const stats = calculateMarketStatistics([], START, now, now, publicationTimes);
 
-    assert.deepEqual(stats.publications[0], {
-        intervals: [1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0],
-        peaks: [{ startMinute: 11 * 60 + 30, count: 2 }],
-    });
-    assert.equal(stats.publications[6].intervals[11], 1);
-    assert.deepEqual(stats.publications[6].peaks, [{ startMinute: 22 * 60, count: 1 }]);
+    assert.equal(stats.publications.length, 7);
+    assert.ok(stats.publications.every((day) => day.length === 24));
+    assert.deepEqual(stats.publications[0].flatMap((count, hour) => count ? [[hour, count]] : []), [[0, 1], [11, 1], [13, 1]]);
+    assert.equal(stats.publications[6][23], 1);
 });
 
 test('median combines individual completed lifetimes rather than per-snapshot medians', () => {

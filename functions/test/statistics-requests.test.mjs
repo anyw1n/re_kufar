@@ -20,8 +20,8 @@ function fixture() {
     };
     const processDependencies = {
         store,
-        loadReport: async (city) => { loaded.push(city); return '📊 report'; },
-        editMessage: async (chatId, messageId, text) => { edits.push({ chatId, messageId, text }); },
+        loadReport: async (city) => { loaded.push(city); return { text: '📊 report' }; },
+        editMessage: async (chatId, messageId, report) => { edits.push({ chatId, messageId, ...report }); },
         onError: (error) => errors.push(error),
         isPermanentDeliveryError: () => false,
     };
@@ -56,7 +56,7 @@ test('the worker promise remains pending until the report has loaded and the mes
     assert.equal(finished, false);
     assert.equal((await f.store.get('42')).status, 'processing');
     assert.equal(f.edits.length, 0);
-    resolveReport('finished report');
+    resolveReport({ text: 'finished report' });
     assert.equal(await processing, 'sent');
     assert.equal(f.edits[0].text, 'finished report');
 });
@@ -97,18 +97,35 @@ test('a failed report updates the original loading message and records a termina
     assert.ok(f.edits[0].text.includes('Не удалось получить статистику'));
 });
 
-test('a transient edit failure resumes from the saved report without fetching Kufar again', async () => {
+test('a transient edit failure resumes from the saved text and photo, then clears the photo', async () => {
     const f = fixture();
     await enqueueStatisticsRequest('42', 1, City.Gomel, f.enqueueDependencies);
+    const photo = Uint8Array.of(1, 2, 3);
+    const originalLoad = f.processDependencies.loadReport;
+    f.processDependencies.loadReport = async (city) => ({ ...await originalLoad(city), photo });
     const originalEdit = f.processDependencies.editMessage;
     f.processDependencies.editMessage = async () => { throw new Error('Telegram unavailable'); };
     await assert.rejects(processStatisticsRequest('42', f.processDependencies), /Telegram unavailable/);
     assert.equal((await f.store.get('42')).reportText, '📊 report');
+    assert.deepEqual((await f.store.get('42')).reportPhoto, photo);
     assert.equal((await f.store.get('42')).status, 'queued');
     f.processDependencies.editMessage = originalEdit;
     assert.equal(await processStatisticsRequest('42', f.processDependencies), 'sent');
     assert.deepEqual(f.loaded, [City.Gomel]);
     assert.equal(f.edits.length, 1);
+    assert.deepEqual(f.edits[0].photo, photo);
+    assert.equal((await f.store.get('42')).reportPhoto, null);
+});
+
+test('a saved text report from before photo delivery still resumes', async () => {
+    const f = fixture();
+    await enqueueStatisticsRequest('42', 1, City.Gomel, f.enqueueDependencies);
+    f.firestore.documents.get('statisticsRequests/42').reportText = 'saved text report';
+
+    assert.equal(await processStatisticsRequest('42', f.processDependencies), 'sent');
+    assert.deepEqual(f.loaded, []);
+    assert.equal(f.edits[0].text, 'saved text report');
+    assert.equal(f.edits[0].photo, undefined);
 });
 
 test('a permanent delivery error is recorded without endless event retries', async () => {
@@ -137,7 +154,7 @@ test('a live worker lease excludes another worker and fences off an expired owne
     await assert.rejects(f.store.claim('42', 'second'), /already processing/);
     f.firestore.documents.get('statisticsRequests/42').leaseExpiresAt = Date.now() - 1;
     assert.notEqual(await f.store.claim('42', 'second'), null);
-    await assert.rejects(f.store.saveReport('42', 'first', 'stale report', false), /lease lost/);
+    await assert.rejects(f.store.saveReport('42', 'first', { text: 'stale report' }, false), /lease lost/);
     await assert.rejects(f.store.complete('42', 'first', false), /lease lost/);
     await f.store.complete('42', 'second', false);
     assert.equal((await f.store.get('42')).status, 'sent');

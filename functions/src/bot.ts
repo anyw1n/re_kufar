@@ -3,7 +3,7 @@ import {
     createConversation,
     type ConversationFlavor,
 } from '@grammyjs/conversations';
-import { Api, Bot, GrammyError, webhookCallback, type Context } from 'grammy';
+import { Api, Bot, GrammyError, InputFile, webhookCallback, type Context } from 'grammy';
 import {
     type ForceReply,
     type InlineKeyboardMarkup,
@@ -17,6 +17,7 @@ import * as logger from 'firebase-functions/logger';
 import { setFiltersConversation } from './conversations';
 import * as db from './db';
 import { mainMenuCustomKeyboard } from './keyboards';
+import { type StatisticsReport } from './statistics-report';
 import { enqueueStatisticsRequest, StatisticsRequestStore } from './statistics-requests';
 import { getCityDisplayName, getRoomsDisplayName } from './types';
 
@@ -45,14 +46,39 @@ export const sendPhoto = (
     }
 ) => bot.api.sendPhoto(chatId, imageUrl, other);
 
-export async function sendStatisticsMessage(chatId: number, text: string): Promise<number> {
-    const message = await statisticsApi.sendMessage(chatId, text, { parse_mode: 'MarkdownV2' });
+function statisticsPhoto(report: StatisticsReport) {
+    if (!report.photo) return null;
+    // Count displayed characters in the report's MarkdownV2 escapes, bold and italics.
+    const captionLength = report.text.replace(/\\(.)|[*_]/g, '$1').length;
+    if (captionLength > 1024) return null;
+
+    return {
+        media: new InputFile(report.photo, 'publications.png'),
+        caption: report.text,
+        parse_mode: 'MarkdownV2' as const,
+        show_caption_above_media: true,
+    };
+}
+
+export async function sendStatisticsMessage(chatId: number, report: StatisticsReport): Promise<number> {
+    const photo = statisticsPhoto(report);
+    if (photo) {
+        const { media, ...caption } = photo;
+        const message = await statisticsApi.sendPhoto(chatId, media, caption);
+        return message.message_id;
+    }
+    const message = await statisticsApi.sendMessage(chatId, report.text, { parse_mode: 'MarkdownV2' });
     return message.message_id;
 }
 
-export async function editStatisticsMessage(chatId: number, messageId: number, text: string): Promise<void> {
+export async function editStatisticsMessage(chatId: number, messageId: number, report: StatisticsReport): Promise<void> {
     try {
-        await statisticsApi.editMessageText(chatId, messageId, text, { parse_mode: 'MarkdownV2' });
+        const photo = statisticsPhoto(report);
+        if (photo) {
+            await statisticsApi.editMessageMedia(chatId, messageId, { type: 'photo', ...photo });
+        } else {
+            await statisticsApi.editMessageText(chatId, messageId, report.text, { parse_mode: 'MarkdownV2' });
+        }
     } catch (error) {
         if (error instanceof GrammyError && error.error_code === 400 && error.description.includes('message is not modified')) return;
         throw error;
