@@ -149,8 +149,8 @@ test('formats listing counts in the city header and room-specific P50 in the pri
         '  P10: 130$ • P90: 470$',
         '',
         '🚪 *По комнатам:*',
-        '  1\\-комн\\.: 3 кв\\., \\~233$ • P50: 200$',
-        '  2\\-комн\\.: 1 кв\\., \\~500$ • P50: 500$',
+        '  1\\-к: 3 кв\\., \\~233$ • P50: 200$',
+        '  2\\-к: 1 кв\\., \\~500$ • P50: 500$',
         '  Не указано: 1 кв\\., нет подходящих цен',
     ]);
 });
@@ -164,7 +164,7 @@ test('keeps ad and room counts when no valid prices are available', () => {
 
     assert.ok(text.includes('📊 *Минск*, 2 об\\. \\(с: 2, а: 0\\)'));
     assert.ok(text.includes('Нет объявлений с подходящей ценой\\.'));
-    assert.ok(text.includes('1\\-комн\\.: 2 кв\\., нет подходящих цен'));
+    assert.ok(text.includes('1\\-к: 2 кв\\., нет подходящих цен'));
     assert.ok(!text.includes('P50'));
     assert.doesNotMatch(text, /NaN|undefined|Infinity/);
 });
@@ -174,5 +174,5 @@ test('uses only valid prices for room averages and medians while counting all st
     const text = formatStatistics(ads, 'Минск');
 
     assert.ok(text.includes('📊 *Минск*, 4 об\\. \\(с: 4, а: 0\\)'));
-    assert.ok(text.includes('Студии: 4 кв\\., \\~200$ • P50: 200$'));
+    assert.ok(text.includes('Ст: 4 кв\\., \\~200$ • P50: 200$'));
 });

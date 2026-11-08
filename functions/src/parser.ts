@@ -4,7 +4,7 @@ import { InlineKeyboard } from 'grammy';
 
 import { sendPhoto } from './bot';
 import * as db from './db';
-import { type Filters, type KufarResponse } from './types';
+import { Rooms, type Filters, type KufarResponse } from './types';
 
 const makeKfRequestUrl = (filters: Filters): string => {
     const { city, minCost, maxCost, rooms } = filters;
@@ -60,12 +60,13 @@ export async function checkNewAds() {
                     .find((e) => e.p === 'address')
                     ?.v;
                 const price = ad.price_usd.slice(0, -2);
-                const rooms = ad.ad_parameters.find((e) => e.p === 'rooms')?.v;
+                const rooms = String(ad.ad_parameters.find((e) => e.p === 'rooms')?.v || '');
+                const roomsLabel = rooms === Rooms.Studio ? 'Студия' : `${rooms} комн.`;
                 const date = new Date(ad.list_time).toLocaleString('ru-BY', { timeZone: 'Europe/Minsk' });
                 const adUrl = ad.ad_link;
                 for (const { chatId } of users) {
                     await sendPhoto(chatId, image, {
-                        caption: `<b>💵 ${price}$${rooms ? `, 🚪 ${rooms} комн.` : ''}</b>\n` +
+                        caption: `<b>💵 ${price}$${rooms ? `, 🚪 ${roomsLabel}` : ''}</b>\n` +
                             `📍 ${address ?? 'Адрес не указан'}\n\n` +
                             `<i>📆 ${date}</i>`,
                         parse_mode: 'HTML',

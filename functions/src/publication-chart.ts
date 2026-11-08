@@ -15,6 +15,7 @@ export async function renderPublicationChart(
     publications: readonly (readonly number[])[],
     fetcher: typeof fetch = fetch,
 ): Promise<Buffer> {
+    const peak = Math.max(0, ...publications.flat());
     const datasets = publications.map((counts, index) => ({
         label: weekdays[index],
         data: counts,
@@ -60,9 +61,14 @@ export async function renderPublicationChart(
                         grid: { color: '#253348' },
                     },
                     y: {
-                        beginAtZero: true, suggestedMax: 15,
+                        beginAtZero: true,
+                        bounds: 'data',
+                        max: Math.max(1, peak * 1.1),
                         title: { display: true, text: 'Опубликовано', color: axis, font: { size: 18, weight: 'semibold' } },
-                        ticks: { color: axis, font: { size: 12 }, padding: 10 },
+                        ticks: {
+                            color: axis, font: { size: 12 }, padding: 10,
+                            precision: 0, includeBounds: false,
+                        },
                         grid: { color: '#2c3a50' },
                     },
                 },

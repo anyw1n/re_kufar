@@ -69,13 +69,18 @@ test('shared report attaches a dark QuickChart PNG from Minsk hourly publication
     const payload = JSON.parse(requests[0].options.body);
     assert.equal(payload.backgroundColor, '#111827');
     assert.equal(payload.devicePixelRatio, 2);
-    const { data } = JSON.parse(payload.chart);
+    const { data, options } = JSON.parse(payload.chart);
     assert.equal(data.labels.length, 24);
     assert.equal(data.labels[23], '23:00-24:00');
     assert.deepEqual(data.datasets.map((day) => day.label), ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']);
     assert.ok(data.datasets.every((day) => day.data.length === 24 && day.cubicInterpolationMode === 'monotone'));
     assert.deepEqual(data.datasets[0].data.slice(8, 10), [2, 1]);
     assert.equal(data.datasets[6].data[23], 1);
+    const y = options.scales.y;
+    assert.equal(y.max, 2.2);
+    assert.equal(y.bounds, 'data');
+    assert.equal(y.ticks.precision, 0);
+    assert.equal(y.ticks.includeBounds, false);
 });
 
 test('chart errors preserve the text report and report that the graph is unavailable', async () => {
